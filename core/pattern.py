@@ -9,17 +9,33 @@ class PatternEngine:
     izvodi konvoluciju s 3 filtera 3×3, korak po korak.
 
     Specijalni regioni u mapi:
-      - Za svaki filter: jedan region identičan filteru (pozitivno poklapanje)
-      - Za svaki filter: jedan region = -1 × filter (negativno poklapanje)
+      - Za svaki filter: jedan region identičan filteru     (pozitivno poklapanje)
+      - Za svaki filter: jedan region = -1 × filter         (negativno poklapanje)
       - Ostatak: slučajne vrijednosti iz [-3, 3]
 
-    Izlaz: za svaki filter posebna 10×10 mapa (stride=1, bez paddinga).
+    Step dict koji get_current_step() vraća:
+    {
+        "filter_idx":      int,          # koji filter (0/1/2)
+        "filter_row":      int,          # gornji lijevi red u ulazu
+        "filter_col":      int,          # gornji lijevi col u ulazu
+        "out_row":         int,
+        "out_col":         int,
+        "region":          np.ndarray,   # (3,3) isječak ulaza
+        "kernel":          np.ndarray,   # (3,3) trenutni filter
+        "products":        np.ndarray,   # (3,3) element-wise množenje
+        "output_value":    float,        # suma proizvoda
+        "match_type":      str,          # "positive" | "negative" | "neutral"
+        "step_idx":        int,
+        "total_steps":     int,
+        "input_map":       np.ndarray,   # cijela 12×12 mapa (referenca)
+        "all_output_maps": list,         # lista 3 izlazne mape (10×10 svaka)
+    }
     """
 
-    MAP_SIZE = 12       # fiksno prema zadatku
-    FILTER_SIZE = 3     # fiksno prema zadatku
-    NUM_FILTERS = 3     # fiksno prema zadatku
-    STRIDE = 1          # fiksno
+    MAP_SIZE    = 12
+    FILTER_SIZE = 3
+    NUM_FILTERS = 3
+    STRIDE      = 1
 
     def __init__(self):
         self._generate()
@@ -29,152 +45,138 @@ class PatternEngine:
     # ------------------------------------------------------------------
 
     def _generate(self):
-        """
-        Korak 1: Generiši 3 slučajna filtera.
-        Korak 2: Generiši slučajnu baznu mapu iz [-3, 3].
-        Korak 3: Smjesti specijalne regione u mapu.
-        Korak 4: Izračunaj sve korake konvolucije za sva 3 filtera.
-        """
-
-        # Korak 1: Filteri — vrijednosti iz [-3, 3] prema zadatku
-        # Shape: (NUM_FILTERS, FILTER_SIZE, FILTER_SIZE)
+        # 3 filtera, vrijednosti iz [-3, 3]
         self.filters = random_int_array(
             (self.NUM_FILTERS, self.FILTER_SIZE, self.FILTER_SIZE),
             low=-3, high=3
         )
 
-        # Korak 2: Bazna mapa — popuni sve slučajno
+        # Bazna mapa — popuni slučajno
         self.input_map = random_int_array(
             (self.MAP_SIZE, self.MAP_SIZE),
             low=-3, high=3
         )
 
-        # Korak 3: Smjesti specijalne regione
+        # Smjesti specijalne regione i zapamti pozicije
         self.special_regions = self._place_special_regions()
 
-        # Korak 4: Unaprijed izračunaj korake za svaki filter
-        # steps_per_filter[f] = lista koraka za filter f
+        # Izlazna dimenzija: (12 - 3) / 1 + 1 = 10
         self.output_size = (
             (self.MAP_SIZE - self.FILTER_SIZE) // self.STRIDE + 1
-        )  # = 10
+        )
 
+        # Izlazne mape — moraju biti kreirane PRIJE _compute_steps_for_filter
+        # jer steps drže referencu na output_maps
+        # NaN = još nije izračunato (renderer ih prikazuje kao "čeka")
+        self.output_maps = [
+            np.full((self.output_size, self.output_size), np.nan)
+            for _ in range(self.NUM_FILTERS)
+        ]
+
+        # Unaprijed izračunaj korake za svaki filter
         self.steps_per_filter = [
             self._compute_steps_for_filter(f)
             for f in range(self.NUM_FILTERS)
         ]
 
-        # Izlazne mape — jedna po filteru, pune se korak po korak
-        self.output_maps = [
-            np.zeros((self.output_size, self.output_size), dtype=float)
-            for _ in range(self.NUM_FILTERS)
-        ]
-
-        # Navigacija
-        self.current_filter = 0   # koji filter trenutno vizualizujemo
-        self.current_step = 0
+        self.current_filter = 0
+        self.current_step   = 0
 
     def _place_special_regions(self) -> list[dict]:
         """
         Smješta 6 specijalnih regiona (3 pozitivna + 3 negativna) u mapu.
-
-        Strategija blokova:
-          Mapa 12×12 → 9 blokova 4×4 (indeksi blokova: 0–8)
-          U bloku (br, bc) region počinje na (br*4, bc*4)
-          Biramo 6 različitih blokova nasumično.
-
-        Vraća listu dict-ova s informacijama o svakom specijalnom regionu
-        (za vizualizaciju — da možemo istaknuti ta mjesta).
+        Koristi strategiju 4×4 blokova — 9 blokova ukupno, biramo 6.
+        Vraća listu dict-ova s pozicijama (koriste se u rendereru).
         """
-        # Sve moguće pozicije blokova
         block_positions = [
             (br * 4, bc * 4)
             for br in range(3)
             for bc in range(3)
-        ]  # 9 blokova
+        ]
 
-        # Odaberi 6 različitih blokova bez ponavljanja
-        chosen_indices = np.random.choice(len(block_positions), size=6, replace=False)
-        chosen_positions = [block_positions[i] for i in chosen_indices]
+        chosen_idx = np.random.choice(len(block_positions), size=6, replace=False)
+        chosen     = [block_positions[i] for i in chosen_idx]
 
         special_regions = []
 
-        for filter_idx in range(self.NUM_FILTERS):
-            # Pozitivno poklapanje — region = filter
-            pos_row, pos_col = chosen_positions[filter_idx * 2]
+        for fi in range(self.NUM_FILTERS):
+            # Pozitivno poklapanje
+            pr, pc = chosen[fi * 2]
             self.input_map[
-                pos_row : pos_row + self.FILTER_SIZE,
-                pos_col : pos_col + self.FILTER_SIZE
-            ] = self.filters[filter_idx]
+                pr : pr + self.FILTER_SIZE,
+                pc : pc + self.FILTER_SIZE
+            ] = self.filters[fi]
 
             special_regions.append({
-                "filter_idx": filter_idx,
-                "type": "positive",        # identičan filteru
-                "row": pos_row,
-                "col": pos_col,
+                "filter_idx": fi,
+                "type": "positive",
+                "row":  pr,
+                "col":  pc,
             })
 
-            # Negativno poklapanje — region = -1 * filter
-            neg_row, neg_col = chosen_positions[filter_idx * 2 + 1]
+            # Negativno poklapanje
+            nr, nc = chosen[fi * 2 + 1]
             self.input_map[
-                neg_row : neg_row + self.FILTER_SIZE,
-                neg_col : neg_col + self.FILTER_SIZE
-            ] = -self.filters[filter_idx]
+                nr : nr + self.FILTER_SIZE,
+                nc : nc + self.FILTER_SIZE
+            ] = -self.filters[fi]
 
             special_regions.append({
-                "filter_idx": filter_idx,
-                "type": "negative",        # negativan filter
-                "row": neg_row,
-                "col": neg_col,
+                "filter_idx": fi,
+                "type": "negative",
+                "row":  nr,
+                "col":  nc,
             })
 
         return special_regions
 
     def _compute_steps_for_filter(self, filter_idx: int) -> list[dict]:
         """
-        Ista logika kao ConvolutionEngine._compute_all_steps,
-        ali za jedan specifičan filter i jednokanalni ulaz.
-
-        Dodatno bilježimo je li trenutna pozicija specijalni region
-        (za vizualizaciju — isticanje pozitivnih/negativnih poklapanja).
+        Prolazi kroz sve pozicije filtera i za svaku gradi step dict.
+        Uključuje match_type ("positive"/"negative"/"neutral") koji
+        renderer koristi za bojanje i naslov.
         """
-        f = self.filters[filter_idx]  # shape (3, 3)
-        steps = []
+        f = self.filters[filter_idx]
 
-        # Skup specijalnih pozicija za ovaj filter (za brzo lookup)
-        special_map = {}
+        # Brzi lookup: (out_row, out_col) → match_type za ovaj filter
+        match_lookup = {}
         for sr in self.special_regions:
             if sr["filter_idx"] == filter_idx:
-                # Ključ: (out_row, out_col) u izlaznoj mapi
                 # Specijalni region počinje na (sr["row"], sr["col"]) u ulazu
-                # To odgovara out poziciji (sr["row"]/stride, sr["col"]/stride)
+                # što odgovara out poziciji (sr["row"]//stride, sr["col"]//stride)
                 out_r = sr["row"] // self.STRIDE
                 out_c = sr["col"] // self.STRIDE
-                special_map[(out_r, out_c)] = sr["type"]
+                match_lookup[(out_r, out_c)] = sr["type"]
+
+        steps = []
+        total = self.output_size * self.output_size
 
         for i in range(self.output_size):
             for j in range(self.output_size):
+                rs = i * self.STRIDE
+                cs = j * self.STRIDE
 
-                row_start = i * self.STRIDE
-                col_start = j * self.STRIDE
-
-                region = self.input_map[
-                    row_start : row_start + self.FILTER_SIZE,
-                    col_start : col_start + self.FILTER_SIZE
-                ].copy()
-
-                products = region * f
+                region   = self.input_map[rs:rs+self.FILTER_SIZE,
+                                          cs:cs+self.FILTER_SIZE].copy()
+                products = (region * f).astype(float)
                 conv_sum = float(np.sum(products))
 
                 steps.append({
-                    "out_row": i,
-                    "out_col": j,
-                    "in_row": row_start,
-                    "in_col": col_start,
-                    "region": region,
-                    "products": products,
-                    "conv_sum": conv_sum,
-                    # None ako nije specijalni, "positive"/"negative" ako jeste
-                    "special": special_map.get((i, j), None),
+                    "filter_idx":      filter_idx,
+                    "filter_row":      rs,
+                    "filter_col":      cs,
+                    "out_row":         i,
+                    "out_col":         j,
+                    "region":          region,
+                    "kernel":          f.copy(),
+                    "products":        products,
+                    "output_value":    conv_sum,
+                    "match_type":      match_lookup.get((i, j), "neutral"),
+                    "step_idx":        len(steps),
+                    "total_steps":     total,
+                    # Reference — renderer ih čita direktno
+                    "input_map":       self.input_map,
+                    "all_output_maps": self.output_maps,
                 })
 
         return steps
@@ -193,7 +195,7 @@ class PatternEngine:
             step = steps[self.current_step]
             self.output_maps[self.current_filter][
                 step["out_row"], step["out_col"]
-            ] = step["conv_sum"]
+            ] = step["output_value"]
             return True
         return False
 
@@ -202,28 +204,24 @@ class PatternEngine:
             step = self.steps_per_filter[self.current_filter][self.current_step]
             self.output_maps[self.current_filter][
                 step["out_row"], step["out_col"]
-            ] = 0.0
+            ] = np.nan
             self.current_step -= 1
             return True
         return False
 
     def set_filter(self, filter_idx: int):
-        """
-        Prebaci vizualizaciju na drugi filter.
-        Reset koraka — svaki filter počinje od nule.
-        """
+        """Prebaci vizualizaciju na drugi filter i resetuj korake."""
         if 0 <= filter_idx < self.NUM_FILTERS:
             self.current_filter = filter_idx
-            self.current_step = 0
-            # Resetuj izlaznu mapu za taj filter
-            self.output_maps[filter_idx] = np.zeros(
-                (self.output_size, self.output_size), dtype=float
+            self.current_step   = 0
+            self.output_maps[filter_idx] = np.full(
+                (self.output_size, self.output_size), np.nan
             )
 
     def reset(self):
         self.current_step = 0
         self.output_maps = [
-            np.zeros((self.output_size, self.output_size), dtype=float)
+            np.full((self.output_size, self.output_size), np.nan)
             for _ in range(self.NUM_FILTERS)
         ]
 
@@ -232,42 +230,29 @@ class PatternEngine:
         return self.current_step == len(steps) - 1
 
     # ------------------------------------------------------------------
-    # Analiza — za info panel
+    # Helpers za renderer — zamjena za stare konstante
     # ------------------------------------------------------------------
 
-    def get_max_response(self, filter_idx: int) -> dict:
-        """
-        Vraća poziciju i vrijednost maksimalnog outputa za dati filter.
-        Ovo je "dokaz" da je filter najjače reagovao na pozitivno poklapanje.
+    def get_positive_position(self, filter_idx: int) -> tuple[int, int]:
+        """Vraća (row, col) pozitivnog poklapanja za dati filter."""
+        for sr in self.special_regions:
+            if sr["filter_idx"] == filter_idx and sr["type"] == "positive":
+                return sr["row"], sr["col"]
+        return (0, 0)
 
-        Može se pozvati tek kad je izlazna mapa popunjena (is_finished).
-        """
-        out_map = self.output_maps[filter_idx]
-        flat_idx = np.argmax(out_map)
-        row, col = np.unravel_index(flat_idx, out_map.shape)
-        return {
-            "row": int(row),
-            "col": int(col),
-            "value": float(out_map[row, col]),
-        }
-
-    def get_min_response(self, filter_idx: int) -> dict:
-        """Analogno — najmanji output odgovara negativnom poklapanju."""
-        out_map = self.output_maps[filter_idx]
-        flat_idx = np.argmin(out_map)
-        row, col = np.unravel_index(flat_idx, out_map.shape)
-        return {
-            "row": int(row),
-            "col": int(col),
-            "value": float(out_map[row, col]),
-        }
+    def get_negative_position(self, filter_idx: int) -> tuple[int, int]:
+        """Vraća (row, col) negativnog poklapanja za dati filter."""
+        for sr in self.special_regions:
+            if sr["filter_idx"] == filter_idx and sr["type"] == "negative":
+                return sr["row"], sr["col"]
+        return (0, 0)
 
     def get_info(self) -> dict:
         return {
-            "input_shape": f"{self.MAP_SIZE}×{self.MAP_SIZE}×1",
-            "filter_shape": f"{self.FILTER_SIZE}×{self.FILTER_SIZE}",
-            "num_filters": str(self.NUM_FILTERS),
-            "output_shape": f"{self.output_size}×{self.output_size}",
+            "input_shape":   f"{self.MAP_SIZE}×{self.MAP_SIZE}×1",
+            "filter_shape":  f"{self.FILTER_SIZE}×{self.FILTER_SIZE}",
+            "num_filters":   str(self.NUM_FILTERS),
+            "output_shape":  f"{self.output_size}×{self.output_size}",
             "current_filter": str(self.current_filter + 1),
-            "total_steps": str(len(self.steps_per_filter[self.current_filter])),
+            "total_steps":   str(len(self.steps_per_filter[self.current_filter])),
         }
