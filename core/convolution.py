@@ -73,11 +73,14 @@ class ConvolutionEngine:
         self.output_size = (padded_size - self.filter_size) // self.stride + 1
 
         # Inicijalizuj izlaznu mapu (puna nulama — popunjavamo korak po korak)
-        self.output_map = np.zeros((self.output_size, self.output_size), dtype=int)
-
+        self.output_map = np.full((self.output_size, self.output_size), np.nan, dtype=float)
         # Izračunaj sve korake unaprijed
         self.steps = self._compute_all_steps()
         self.current_step = 0  # indeks trenutnog koraka
+
+        if self.steps:
+            step0 = self.steps[0]
+            self.output_map[step0["out_row"], step0["out_col"]] = step0["output_val"]
 
     def _compute_all_steps(self) -> list[dict]:
         """
@@ -146,19 +149,19 @@ class ConvolutionEngine:
         return False
 
     def prev_step(self) -> bool:
-        """Pomjeri na prethodni korak. Vraća False ako smo na početku."""
         if self.current_step > 0:
-            # Poništi rezultat trenutnog koraka
             step = self.steps[self.current_step]
-            self.output_map[step["out_row"], step["out_col"]] = 0
+            self.output_map[step["out_row"], step["out_col"]] = np.nan # Umesto 0, stavljamo NaN
             self.current_step -= 1
             return True
         return False
 
     def reset(self):
-        """Vrati na početak, isprazni izlaznu mapu."""
-        self.output_map = np.zeros((self.output_size, self.output_size), dtype=int)
+        self.output_map = np.full((self.output_size, self.output_size), np.nan, dtype=float)
         self.current_step = 0
+        if self.steps:
+            step0 = self.steps[0]
+            self.output_map[step0["out_row"], step0["out_col"]] = step0["output_val"]
 
     def is_finished(self) -> bool:
         return self.current_step == len(self.steps) - 1

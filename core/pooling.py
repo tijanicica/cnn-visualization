@@ -74,6 +74,11 @@ class PoolingEngine:
         self.steps = self._compute_all_steps()
         self.current_step = 0
 
+        if self.steps:
+            step0 = self.steps[0]
+            for c, val in enumerate(step0["output_vals"]):
+                self.output_map[step0["out_row"], step0["out_col"], c] = val
+
     def _pool_region(self, region: np.ndarray) -> float:
         """
         Prima region oblika (filter_size, filter_size) — jedan kanal.
@@ -182,11 +187,12 @@ class PoolingEngine:
         return False
 
     def reset(self):
-        self.output_map = np.full(
-            (self.output_size, self.output_size, self.channels),
-            np.nan
-        )
+        self.output_map = np.full((self.output_size, self.output_size, self.channels), np.nan)
         self.current_step = 0
+        if self.steps:
+            step0 = self.steps[0]
+            for c, val in enumerate(step0["output_vals"]):
+                self.output_map[step0["out_row"], step0["out_col"], c] = val
 
     def is_finished(self) -> bool:
         return self.current_step == len(self.steps) - 1

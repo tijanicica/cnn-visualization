@@ -81,6 +81,13 @@ class PatternEngine:
 
         self.current_filter = 0
         self.current_step   = 0
+        self._apply_current_step()
+
+    def _apply_current_step(self):
+        """Pomoćna metoda za upis trenutnog koraka"""
+        if self.steps_per_filter:
+            step = self.steps_per_filter[self.current_filter][self.current_step]
+            self.output_maps[self.current_filter][step["out_row"], step["out_col"]] = step["output_value"]
 
     def _place_special_regions(self) -> list[dict]:
         """
@@ -217,6 +224,7 @@ class PatternEngine:
             self.output_maps[filter_idx] = np.full(
                 (self.output_size, self.output_size), np.nan
             )
+            self._apply_current_step()
 
     def reset(self):
         self.current_step = 0
@@ -224,6 +232,7 @@ class PatternEngine:
             np.full((self.output_size, self.output_size), np.nan)
             for _ in range(self.NUM_FILTERS)
         ]
+        self._apply_current_step()
 
     def is_finished(self) -> bool:
         steps = self.steps_per_filter[self.current_filter]
