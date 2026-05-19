@@ -83,39 +83,24 @@ class ConvolutionEngine:
             self.output_map[step0["out_row"], step0["out_col"]] = step0["output_val"]
 
     def _compute_all_steps(self) -> list[dict]:
-        """
-        Prolazi kroz sve pozicije filtera i za svaku poziciju čuva:
-          - out_row, out_col  → gdje u izlaznoj mapi ide rezultat
-          - in_row, in_col    → gornji lijevi ugao regiona u paddovanom ulazu
-          - region            → isječak ulaza koji se množi s filterom (shape = filter shape)
-          - products          → element-wise množenje (region * filter_weights), po kanalu
-          - conv_sum          → suma svih proizvoda (skalar, sve kanale zajedno)
-          - output_val        → conv_sum + bias
-        """
         steps = []
-
-        for i in range(self.output_size):        # red izlaza
-            for j in range(self.output_size):    # kolona izlaza
-
-                # Pozicija u paddovanom ulazu (gornji lijevi ugao regiona)
+        for i in range(self.output_size):
+            for j in range(self.output_size):
                 row_start = i * self.stride
                 col_start = j * self.stride
 
-                # Isječak ulaza iste veličine kao filter
-                # shape: (filter_size, filter_size, channels)
                 region = self.padded_input[
-                    row_start : row_start + self.filter_size,
-                    col_start : col_start + self.filter_size,
-                    :
-                ]
+                         row_start: row_start + self.filter_size,
+                         col_start: col_start + self.filter_size,
+                         :
+                         ]
 
-                # Element-wise množenje — svaki element regiona s odgovarajućim težinom
-                products = region * self.filter_weights   # shape isto kao region
+                products = region * self.filter_weights
 
-                # Suma svih proizvoda (po svim prostornim pozicijama i kanalima)
-                conv_sum = int(np.sum(products))
+                # NOVO: Računamo sumu za SVAKI kanal posebno (za lepši ispis u formuli)
+                ch_sums = [int(np.sum(products[:, :, c])) for c in range(self.channels)]
+                conv_sum = sum(ch_sums)
 
-                # Dodaj bias
                 output_val = conv_sum + self.bias
 
                 steps.append({
@@ -123,12 +108,12 @@ class ConvolutionEngine:
                     "out_col": j,
                     "in_row": row_start,
                     "in_col": col_start,
-                    "region": region.copy(),        # .copy() jer numpy slices su view-ovi
+                    "region": region.copy(),
                     "products": products.copy(),
+                    "ch_sums": ch_sums,  # NOVO: čuvamo sume po kanalima
                     "conv_sum": conv_sum,
                     "output_val": output_val,
                 })
-
         return steps
 
     # ------------------------------------------------------------------

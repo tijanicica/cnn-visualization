@@ -7,8 +7,8 @@ from matplotlib.figure import Figure
 # Boje (RGBA)
 # ------------------------------------------------------------------
 COLOR_INPUT = (0.20, 0.60, 0.86, 0.35)  # plava, providna
-COLOR_FILTER = (0.95, 0.50, 0.10, 0.50)  # narandžasta
-COLOR_ACTIVE = (0.95, 0.85, 0.10, 0.70) # zelena — aktivan region
+COLOR_FILTER = (0.78, 0.36, 0.05, 0.75) # narandžasta
+COLOR_ACTIVE = (0.90, 0.20, 0.65, 0.70)# zuta — aktivan region
 COLOR_OUTPUT = (0.60, 0.20, 0.80, 0.60)  # ljubičasta
 COLOR_POSITIVE = (0.10, 0.90, 0.10, 0.80)  # jarko zelena
 COLOR_NEGATIVE = (0.90, 0.10, 0.10, 0.80)  # crvena
@@ -33,11 +33,13 @@ def _draw_block(
         origin: tuple,
         cell_size: float = 1.0,
         gap: float = 0.08,
+        channel_gap: float = 1.5,  # NOVO: Ogroman razmak između kanala!
         face_color=COLOR_INPUT,
         highlight_mask: np.ndarray = None,
         highlight_color=COLOR_ACTIVE,
-        color_matrix: np.ndarray = None,  # NOVO: Eksplicitne boje za svaku kocku
+        color_matrix: np.ndarray = None,
         show_values: bool = True,
+        values_mask: np.ndarray = None,
         value_fmt: str = "{}",
 ):
     if data.ndim == 2:
@@ -54,19 +56,17 @@ def _draw_block(
         for r in range(rows):
             for col in range(cols):
                 val = data[r, col, c]
-
-                # NOVO: Ako je vrednost NaN (neizračunato), preskoči crtanje kocke!
                 if np.isnan(val):
                     continue
 
                 cx = x0 + col * cell_size
-                cy = y0 + c * cell_size
+                # NOVO: Dodajemo channel_gap da fizički razdvojimo kanale po Y osi
+                cy = y0 + c * (cell_size + channel_gap)
                 cz = z0 + (rows - 1 - r) * cell_size
 
                 faces = _cube_faces(cx, cy, cz, s)
                 all_faces.extend(faces)
 
-                # Određivanje boje
                 if color_matrix is not None:
                     color = color_matrix[r, col]
                 elif highlight_mask is not None and highlight_mask[r, col]:
@@ -77,7 +77,7 @@ def _draw_block(
                 all_colors.extend([color] * 6)
 
     if not all_faces:
-        return  # Nema šta da se crta
+        return
 
     poly = Poly3DCollection(
         all_faces, facecolors=all_colors, edgecolors=COLOR_EDGE, linewidths=0.3
@@ -88,11 +88,15 @@ def _draw_block(
         for c in range(channels):
             for r in range(rows):
                 for col in range(cols):
+                    if values_mask is not None and not values_mask[r, col]:
+                        continue
+
                     val = data[r, col, c]
                     if np.isnan(val):
                         continue
+
                     cx = x0 + col * cell_size + s / 2
-                    cy = y0 + c * cell_size + s / 2
+                    cy = y0 + c * (cell_size + channel_gap) + s / 2
                     cz = z0 + (rows - 1 - r) * cell_size + s / 2
                     ax.text(
                         cx, cy, cz, value_fmt.format(val),
@@ -100,13 +104,11 @@ def _draw_block(
                         fontweight='bold', color='white', zorder=5,
                     )
 
-
-def _set_ax_limits(ax, max_dim: int, cell_size: float = 1.0):
-    lim = max_dim * cell_size + 1.0
-    ax.set_xlim(0, lim)
-    ax.set_ylim(0, lim)
-    ax.set_zlim(0, lim)
-    # NOVO: Brisanje koordinatnog sistema, mreže i pozadine!
+def _set_ax_limits(ax, max_ext: float):
+    # Pojednostavljeno: pravimo savršenu kocku prostora da se slika ne bi deformisala
+    ax.set_xlim(0, max_ext)
+    ax.set_ylim(0, max_ext)
+    ax.set_zlim(0, max_ext)
     ax.set_axis_off()
 
 
@@ -116,25 +118,42 @@ def render_convolution(fig: Figure, engine, step: dict) -> None:
             fig.add_subplot(133, projection='3d')]
 
     padded, filt, out = engine.padded_input, engine.filter_weights, engine.output_map
-    rows_p, cols_p, _ = padded.shape
+    rows_p, cols_p, C = padded.shape
     F = engine.filter_size
 
     mask = np.zeros((rows_p, cols_p), dtype=bool)
     mask[step["in_row"]: step["in_row"] + F, step["in_col"]: step["in_col"] + F] = True
 
-    _draw_block(axes[0], padded, origin=(0, 0, 0), highlight_mask=mask)
-    axes[0].set_title(f"Ulaz {'(padded)' if engine.padding else ''}", fontsize=9, pad=4)
+    # Ulaz
+    _draw_block(axes[0], padded, origin=(0, 0, 0), highlight_mask=mask, values_mask=mask, channel_gap=1.5)
+    axes[0].set_title(f"ULAZNA MAPA {'(Padded)' if engine.padding else ''}", fontsize=11, fontweight='bold', pad=15)
 
-    _draw_block(axes[1], filt, origin=(0, 0, 0), face_color=COLOR_FILTER, value_fmt="{:.0f}")
-    formula = f"Σ(ulaz × filter) = {step['conv_sum']}" + (f" + bias = {step['output_val']}" if engine.bias else "")
-    axes[1].set_title(f"Filter\n{formula}", fontsize=8, pad=4)
+    # Filter
+    _draw_block(axes[1], filt, origin=(0, 0, 0), face_color=COLOR_FILTER, value_fmt="{:.0f}", channel_gap=1.5)
 
-    _draw_block(axes[2], out, origin=(0, 0, 0), face_color=COLOR_OUTPUT, value_fmt="{:.0f}")
-    axes[2].set_title(f"Izlaz [{step['out_row']},{step['out_col']}] = {step['output_val']}", fontsize=9, pad=4)
+    # NOVO: Generisanje pametne formule koja prikazuje sume po kanalima
+    if C > 1:
+        ch_parts = " + ".join([f"{s}(K{i + 1})" for i, s in enumerate(step['ch_sums'])])
+        formula = f"Σ = {ch_parts} = {step['conv_sum']}"
+    else:
+        formula = f"Σ(ulaz × filter) = {step['conv_sum']}"
+
+    if engine.bias:
+        formula += f"\nUkupno: {step['conv_sum']} + bias({engine.bias}) = {step['output_val']}"
+
+    axes[1].set_title(f"FILTER\n{formula}", fontsize=11, fontweight='bold', pad=15)
+
+    # Izlaz
+    _draw_block(axes[2], out, origin=(0, 0, 0), face_color=COLOR_OUTPUT, value_fmt="{:.0f}", channel_gap=1.5)
+    axes[2].set_title(f"IZLAZNA MAPA\nNova vrednost: {step['output_val']}", fontsize=11, fontweight='bold', pad=15)
+
+    # Računanje dimenzija za prostor (uzimajući u obzir razmak kanala)
+    y_extent = C * 1.0 + (C - 1) * 1.5
+    max_ext = max(rows_p, cols_p, F, engine.output_size, y_extent)
 
     for ax in axes:
-        _set_ax_limits(ax, max(rows_p, cols_p, F, engine.output_size))
-        ax.view_init(elev=25, azim=-50)
+        _set_ax_limits(ax, max_ext)
+        ax.view_init(elev=20, azim=-55)  # Blago promenjen ugao za bolji pogled na razmak
 
     patches = [
         mpatches.Patch(color=COLOR_INPUT[:3], label='Ulaz'),
@@ -142,9 +161,8 @@ def render_convolution(fig: Figure, engine, step: dict) -> None:
         mpatches.Patch(color=COLOR_FILTER[:3], label='Filter'),
         mpatches.Patch(color=COLOR_OUTPUT[:3], label='Izlaz')
     ]
-    fig.legend(handles=patches, loc='lower center', ncol=4, fontsize=8)
+    fig.legend(handles=patches, loc='lower center', ncol=4, fontsize=9)
     fig.tight_layout(rect=[0, 0.05, 1, 1])
-
 
 def render_pooling(fig: Figure, engine, step: dict) -> None:
     fig.clear()

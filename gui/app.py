@@ -18,6 +18,7 @@ from core.convolution import ConvolutionEngine
 # from core.pooling import PoolingEngine     # Otkomenarisaćemo kad budemo dodavali
 # from core.pattern import PatternEngine     # Otkomenarisaćemo kad budemo dodavali
 from visualization.step_animator import StepAnimator
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
 
 class MainWindow(QMainWindow):
@@ -92,6 +93,8 @@ class MainWindow(QMainWindow):
         # Gore: Canvas (3D Kocke)
         center_layout.addWidget(self.canvas)
 
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        center_layout.addWidget(self.toolbar)
         # Dole: Kontrole za puštanje animacije
         playback_layout = QHBoxLayout()
 
