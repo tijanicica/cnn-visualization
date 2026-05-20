@@ -48,23 +48,26 @@ class MainWindow(QMainWindow):
 
         # --- LEVI PANEL: Tabovi i Kontrole ---
         left_panel = QWidget()
-        left_panel.setFixedWidth(600)
+        # 1. POVEĆANA ŠIRINA NA 500px DA BI STAO FONT OD 25px!
+        left_panel.setFixedWidth(500)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
         self.tabs = QTabWidget()
-        #self.tabs.currentChanged.connect(self.on_tab_changed)
+        # 2. OVE DVE LINIJE FORSIRAJU TABOVE DA STANU BEZ STRELICA!
+        self.tabs.tabBar().setExpanding(True)
+        self.tabs.setUsesScrollButtons(False)
 
         # Tab 1: Konvolucija
         self.tab_conv = QWidget()
         self.setup_conv_controls(self.tab_conv)
         self.tabs.addTab(self.tab_conv, "Konvolucija")
 
-        # Tab 2: Pooling (Placeholder za sada)
+        # Tab 2: Pooling
         self.tab_pool = QWidget()
         self.tabs.addTab(self.tab_pool, "Pooling")
 
-        # Tab 3: Pattern (Placeholder za sada)
+        # Tab 3: Pattern
         self.tab_pattern = QWidget()
         self.tabs.addTab(self.tab_pattern, "Detekcija")
 
@@ -75,8 +78,7 @@ class MainWindow(QMainWindow):
         self.info_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.info_label.setStyleSheet("""
             color: #98c379; 
-            font-size: 14px; 
-            font-weight: bold;
+            font-size: 25px; 
             padding: 15px; 
             border: 2px solid #3e4451; 
             border-radius: 6px;
@@ -99,16 +101,20 @@ class MainWindow(QMainWindow):
         playback_layout = QHBoxLayout()
 
         self.btn_prev = QPushButton("◄ Prethodni")
+        self.btn_prev.setStyleSheet("font-size: 20px")
         self.btn_prev.clicked.connect(self.on_prev)
 
         self.btn_auto = QPushButton("Auto ▶")
-        self.btn_auto.setStyleSheet("background-color: #235a39; color: white; font-weight: bold;")
+        self.btn_auto.setStyleSheet("background-color: #235a39; color: white; font-weight: bold; font-size: 20px")
         self.btn_auto.clicked.connect(self.on_auto)
 
         self.btn_next = QPushButton("Sledeći ►")
+        self.btn_next.setStyleSheet("font-size: 20px")
+
         self.btn_next.clicked.connect(self.on_next)
 
         self.btn_reset = QPushButton("↻ Reset")
+        self.btn_reset.setStyleSheet("font-size: 20px")
         self.btn_reset.clicked.connect(self.on_reset)
 
         self.progress_bar = QProgressBar()
@@ -131,36 +137,70 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------
     def setup_conv_controls(self, parent_widget):
         """Pravi slajdere/spinboxeve za parametre konvolucije"""
-        layout = QFormLayout(parent_widget)
+        # Glavni vertikalni layout za ovaj tab
+        main_vbox = QVBoxLayout(parent_widget)
+        main_vbox.setContentsMargins(20, 20, 20, 20)
 
-        self.sp_conv_size = QSpinBox();
-        self.sp_conv_size.setRange(5, 10);
+        # Prazan prostor IZNAD (gura kontrole na sredinu)
+        main_vbox.addStretch()
+
+        # Layout za samu formu (Labele + Unosi)
+        form_layout = QFormLayout()
+        form_layout.setVerticalSpacing(20)  # Veliki razmak između redova
+        form_layout.setHorizontalSpacing(15)  # Razmak između teksta i polja za unos
+
+        self.sp_conv_size = QSpinBox()
+        self.sp_conv_size.setRange(5, 10)
         self.sp_conv_size.setValue(5)
-        self.sp_conv_chan = QSpinBox();
-        self.sp_conv_chan.setRange(1, 3);
+
+        self.sp_conv_chan = QSpinBox()
+        self.sp_conv_chan.setRange(1, 3)
         self.sp_conv_chan.setValue(1)
-        self.sp_conv_filt = QSpinBox();
-        self.sp_conv_filt.setRange(1, 5);
+
+        self.sp_conv_filt = QSpinBox()
+        self.sp_conv_filt.setRange(1, 5)
         self.sp_conv_filt.setValue(3)
-        self.sp_conv_stride = QSpinBox();
-        self.sp_conv_stride.setRange(1, 5);
+
+        self.sp_conv_stride = QSpinBox()
+        self.sp_conv_stride.setRange(1, 5)
         self.sp_conv_stride.setValue(1)
+
         self.chk_conv_pad = QCheckBox()
-        self.sp_conv_bias = QSpinBox();
-        self.sp_conv_bias.setRange(0, 3);
+
+        self.sp_conv_bias = QSpinBox()
+        self.sp_conv_bias.setRange(0, 3)
         self.sp_conv_bias.setValue(0)
 
-        layout.addRow("Dimenzija ulaza:", self.sp_conv_size)
-        layout.addRow("Broj kanala:", self.sp_conv_chan)
-        layout.addRow("Dimenzija filtera:", self.sp_conv_filt)
-        layout.addRow("Korak (stride):", self.sp_conv_stride)
-        layout.addRow("Bias:", self.sp_conv_bias)
-        layout.addRow("Padding", self.chk_conv_pad)
+        # Dodajemo redove u formu
+        form_layout.addRow("Dimenzija ulaza:", self.sp_conv_size)
+        form_layout.addRow("Broj kanala:", self.sp_conv_chan)
+        form_layout.addRow("Dimenzija filtera:", self.sp_conv_filt)
+        form_layout.addRow("Korak (stride):", self.sp_conv_stride)
+        form_layout.addRow("Bias:", self.sp_conv_bias)
+        form_layout.addRow("Padding:", self.chk_conv_pad)
 
+        # Dodajemo formu u glavni vertikalni layout
+        main_vbox.addLayout(form_layout)
+
+        # Dodatni prazan prostor između polja i dugmeta
+        main_vbox.addSpacing(20)
+
+        # Veliko, centrirano dugme
         btn_generate = QPushButton("Generiši novo")
-        btn_generate.setStyleSheet("background-color: #1d4077; color: white;")
+        btn_generate.setMinimumHeight(60)  # Veće i lakše za kliknuti
+        btn_generate.setStyleSheet("""
+            background-color: #528bff; 
+            color: white; 
+            font-size: 20px; 
+            font-weight: bold; 
+            border-radius: 5px;
+        """)
         btn_generate.clicked.connect(self.generate_convolution)
-        layout.addRow("", btn_generate)
+
+        main_vbox.addWidget(btn_generate)
+
+        # Prazan prostor ISPOD (gura kontrole na sredinu zajedno sa gornjim Stretch-om)
+        main_vbox.addStretch()
 
     def generate_convolution(self):
         """Pravi novi ConvolutionEngine na osnovu parametara i pokreće Animator"""
@@ -217,10 +257,10 @@ class MainWindow(QMainWindow):
         is_running = self.animator.toggle_auto()
         if is_running:
             self.btn_auto.setText("Pauza ⏸")
-            self.btn_auto.setStyleSheet("background-color: #8c2626; color: white; font-weight: bold;")
+            self.btn_auto.setStyleSheet("background-color: #8c2626; color: white; font-weight: bold; font-size: 20px")
         else:
             self.btn_auto.setText("Auto ▶")
-            self.btn_auto.setStyleSheet("background-color: #235a39; color: white; font-weight: bold;")
+            self.btn_auto.setStyleSheet("background-color: #235a39; color: white; font-weight: bold; font-size: 20px")
 
     def on_reset(self):
         if self.animator:
@@ -250,7 +290,7 @@ class MainWindow(QMainWindow):
         # Ažuriraj Info panel (ako Engine ima metodu get_info)
         if hasattr(self.engine, "get_info"):
             info = self.engine.get_info()
-            info_text = "TRENUTNI PARAMETRI:\n\n"
+            info_text = "Trenutni parametri:\n\n"
             for k, v in info.items():
                 info_text += f"• {k}: {v}\n"
             self.info_label.setText(info_text)
