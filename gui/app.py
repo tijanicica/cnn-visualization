@@ -14,13 +14,14 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
-# Importujemo vaše core module
+# core modules
 from core.convolution import ConvolutionEngine
 from core.pooling import PoolingEngine
 from visualization.step_animator import StepAnimator
 
-# IMPORT NOVIH KONTROLA
 from gui.controls import ConvControlsTab, PoolControlsTab
+from core.pattern import PatternEngine
+from gui.controls import ConvControlsTab, PoolControlsTab, PatternControlsTab
 
 
 class MainWindow(QMainWindow):
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
 
         self._init_ui()
         self.generate_convolution()
+
 
     def _init_ui(self):
         central_widget = QWidget()
@@ -71,7 +73,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.tab_pool, "Pooling")
 
         # Tab 3: Pattern (Ostaće prazan za sada)
-        self.tab_pattern = QWidget()
+        self.tab_pattern = PatternControlsTab(filter_switch_callback=self.change_pattern_filter)
+        self.tab_pattern.btn_generate.clicked.connect(self.generate_pattern)
         self.tabs.addTab(self.tab_pattern, "Detekcija")
 
         left_layout.addWidget(self.tabs)
@@ -176,6 +179,28 @@ class MainWindow(QMainWindow):
         self.canvas.draw()
         self.update_ui_state()
 
+    def generate_pattern(self):
+        if self.animator:
+            self.animator.stop_auto()
+
+        # PatternEngine nema parametara jer je fiksiran na 12x12 po zadatku
+        self.engine = PatternEngine()
+
+        self.animator = StepAnimator(
+            engine=self.engine, fig=self.fig, mode="pattern",
+            on_step=self.update_ui_state, interval=600  # Nešto brže jer ima 100 koraka
+        )
+
+        self.animator.draw_current()
+        self.canvas.draw()
+        self.update_ui_state()
+
+    def change_pattern_filter(self, filter_idx):
+        """Menja koji se filter prikazuje u Detekciji"""
+        if self.animator and self.animator.mode == "pattern":
+            self.animator.set_filter(filter_idx)
+            self.update_ui_state()
+
     # ---------------------------------------------------------
     # PLAYBACK FUNKCIJE
     # ---------------------------------------------------------
@@ -238,4 +263,5 @@ class MainWindow(QMainWindow):
         elif index == 1:
             self.generate_pooling()
         elif index == 2:
-            self.info_label.setText("Detekcija obrazaca uskoro...")
+            self.generate_pattern()
+

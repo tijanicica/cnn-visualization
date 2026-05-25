@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import (
     QSpinBox, QCheckBox, QPushButton, QComboBox
 )
 from PyQt5.QtWidgets import QListView
+from PyQt5.QtCore import Qt
 
 
 class ConvControlsTab(QWidget):
@@ -163,3 +164,53 @@ class PoolControlsTab(QWidget):
             "stride": self.sp_stride.value(),
             "pool_type": self.cb_type.currentData()
         }
+
+
+# gui/controls.py (Dodajte na kraj fajla)
+
+class PatternControlsTab(QWidget):
+    """GUI kontrole za tab Detekcija Obrazaca"""
+
+    def __init__(self, filter_switch_callback):
+        super().__init__()
+        self.filter_switch_callback = filter_switch_callback
+        self._init_ui()
+
+    def _init_ui(self):
+        main_vbox = QVBoxLayout(self)
+        main_vbox.setContentsMargins(20, 20, 20, 20)
+        main_vbox.addStretch()
+
+        # Naslov sekcije
+        from PyQt5.QtWidgets import QLabel
+        label = QLabel("Izaberi filter za prikaz:")
+        label.setStyleSheet("font-size: 22px; font-weight: bold; margin-bottom: 10px;")
+        label.setAlignment(Qt.AlignCenter)
+        main_vbox.addWidget(label)
+
+        # Dugmići za promenu filtera (1, 2, 3)
+        self.btn_f1 = QPushButton("Filter 1")
+        self.btn_f2 = QPushButton("Filter 2")
+        self.btn_f3 = QPushButton("Filter 3")
+
+        for btn, idx in [(self.btn_f1, 0), (self.btn_f2, 1), (self.btn_f3, 2)]:
+            btn.setMinimumHeight(50)
+            btn.setStyleSheet("font-size: 20px; background-color: #2c313c;")
+            btn.clicked.connect(lambda checked, i=idx: self.filter_switch_callback(i))
+            main_vbox.addWidget(btn)
+
+        main_vbox.addSpacing(40)
+
+        # Dugme za generisanje potpuno nove mape i filtera
+        self.btn_generate = QPushButton("Generiši novo")
+        self.btn_generate.setMinimumHeight(60)
+        self.btn_generate.setStyleSheet("""
+            background-color: #528bff; 
+            color: white; 
+            font-size: 20px; 
+            font-weight: bold; 
+            border-radius: 5px;
+        """)
+
+        main_vbox.addWidget(self.btn_generate)
+        main_vbox.addStretch()
