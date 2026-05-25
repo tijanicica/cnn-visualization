@@ -2,23 +2,25 @@
 import sys
 import matplotlib
 
-matplotlib.use('Qt5Agg')  # Govorimo matplotlibu da koristi Qt render
+matplotlib.use('Qt5Agg')
 
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QTabWidget, QPushButton, QSpinBox, QCheckBox, QLabel, QProgressBar, QComboBox
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QTabWidget, QPushButton, QLabel, QProgressBar
 )
 from PyQt5.QtCore import Qt
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-
-# Importujemo module
-from core.convolution import ConvolutionEngine
-from core.pooling import PoolingEngine  # <-- OTKOMENTARISANO!
-# from core.pattern import PatternEngine
-from visualization.step_animator import StepAnimator
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+
+# Importujemo vaše core module
+from core.convolution import ConvolutionEngine
+from core.pooling import PoolingEngine
+from visualization.step_animator import StepAnimator
+
+# IMPORT NOVIH KONTROLA
+from gui.controls import ConvControlsTab, PoolControlsTab
 
 
 class MainWindow(QMainWindow):
@@ -27,21 +29,16 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("CNN Visualizer")
         self.resize(1200, 700)
 
-        # Matplotlib Figure koji će se prikazivati u GUI-u
-        self.fig = Figure(figsize=(8, 4), facecolor='#1e2128')  # Boja pozadine ista kao tamna tema
+        self.fig = Figure(figsize=(8, 4), facecolor='#1e2128')
         self.canvas = FigureCanvas(self.fig)
 
-        # Glavni state (trenutni engine i animator)
         self.engine = None
         self.animator = None
 
         self._init_ui()
-
-        # Pokrećemo inicijalni mod (Konvolucija)
         self.generate_convolution()
 
     def _init_ui(self):
-        """Kreira raspored (layout) aplikacije"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
@@ -56,30 +53,29 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().setExpanding(True)
         self.tabs.setUsesScrollButtons(False)
         self.tabs.setStyleSheet("""
-                    QTabBar::tab {
-                        width: 196px;       /* Širina svakog taba */
-                        height: 40px;       /* Opciono: visina taba da izgleda masivnije */
-                        font-size: 25px;    /* Opciono: povećaš font naslova taba */
-                    }
-                """)
+            QTabBar::tab {
+                width: 196px;       
+                height: 40px;       
+                font-size: 25px;    
+            }
+        """)
 
-        # Tab 1: Konvolucija
-        self.tab_conv = QWidget()
-        self.setup_conv_controls(self.tab_conv)
+        # Tab 1: Konvolucija (Povezivanje sa klasom iz controls.py)
+        self.tab_conv = ConvControlsTab()
+        self.tab_conv.btn_generate.clicked.connect(self.generate_convolution)
         self.tabs.addTab(self.tab_conv, "Konvolucija")
 
-        # Tab 2: Pooling
-        self.tab_pool = QWidget()
-        self.setup_pool_controls(self.tab_pool)  # <-- DODATO
+        # Tab 2: Pooling (Povezivanje sa klasom iz controls.py)
+        self.tab_pool = PoolControlsTab()
+        self.tab_pool.btn_generate.clicked.connect(self.generate_pooling)
         self.tabs.addTab(self.tab_pool, "Pooling")
 
-        # Tab 3: Pattern
+        # Tab 3: Pattern (Ostaće prazan za sada)
         self.tab_pattern = QWidget()
         self.tabs.addTab(self.tab_pattern, "Detekcija")
 
         left_layout.addWidget(self.tabs)
 
-        # Info panel ispod kontrola (ispisuje status)
         self.info_label = QLabel("Info panel:\nČekam podatke...")
         self.info_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.info_label.setStyleSheet("""
@@ -98,13 +94,10 @@ class MainWindow(QMainWindow):
         center_panel = QWidget()
         center_layout = QVBoxLayout(center_panel)
 
-        # Gore: Canvas (3D Kocke)
         center_layout.addWidget(self.canvas)
-
         self.toolbar = NavigationToolbar(self.canvas, self)
         center_layout.addWidget(self.toolbar)
 
-        # Dole: Kontrole za puštanje animacije
         playback_layout = QHBoxLayout()
 
         self.btn_prev = QPushButton("◄ Prethodni")
@@ -135,178 +128,50 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(self.progress_bar)
 
         main_layout.addWidget(center_panel)
-
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
     # ---------------------------------------------------------
-    # KONTROLE ZA KONVOLUCIJU
+    # GENERISANJE LOGIKE
     # ---------------------------------------------------------
-    def setup_conv_controls(self, parent_widget):
-        main_vbox = QVBoxLayout(parent_widget)
-        main_vbox.setContentsMargins(20, 20, 20, 20)
-        main_vbox.addStretch()
-
-        form_layout = QFormLayout()
-        form_layout.setVerticalSpacing(20)
-        form_layout.setHorizontalSpacing(15)
-
-        self.sp_conv_size = QSpinBox()
-        self.sp_conv_size.setRange(5, 10)
-        self.sp_conv_size.setValue(5)
-
-        self.sp_conv_chan = QSpinBox()
-        self.sp_conv_chan.setRange(1, 3)
-        self.sp_conv_chan.setValue(1)
-
-        self.sp_conv_filt = QSpinBox()
-        self.sp_conv_filt.setRange(1, 5)
-        self.sp_conv_filt.setValue(3)
-
-        self.sp_conv_stride = QSpinBox()
-        self.sp_conv_stride.setRange(1, 5)
-        self.sp_conv_stride.setValue(1)
-
-        self.chk_conv_pad = QCheckBox()
-
-        self.sp_conv_bias = QSpinBox()
-        self.sp_conv_bias.setRange(0, 3)
-        self.sp_conv_bias.setValue(0)
-
-        form_layout.addRow("Dimenzija ulaza:", self.sp_conv_size)
-        form_layout.addRow("Broj kanala:", self.sp_conv_chan)
-        form_layout.addRow("Dimenzija filtera:", self.sp_conv_filt)
-        form_layout.addRow("Korak (stride):", self.sp_conv_stride)
-        form_layout.addRow("Bias:", self.sp_conv_bias)
-        form_layout.addRow("Padding:", self.chk_conv_pad)
-
-        main_vbox.addLayout(form_layout)
-        main_vbox.addSpacing(20)
-
-        btn_generate = QPushButton("Generiši")
-        btn_generate.setMinimumHeight(60)
-        btn_generate.setStyleSheet("""
-            background-color: #528bff; 
-            color: white; 
-            font-size: 20px; 
-            font-weight: bold; 
-            border-radius: 5px;
-        """)
-        btn_generate.clicked.connect(self.generate_convolution)
-
-        main_vbox.addWidget(btn_generate)
-        main_vbox.addStretch()
-
     def generate_convolution(self):
         if self.animator:
             self.animator.stop_auto()
 
-        size = self.sp_conv_size.value()
-        channels = self.sp_conv_chan.value()
-        f_size = self.sp_conv_filt.value()
-        stride = self.sp_conv_stride.value()
-        padding = self.chk_conv_pad.isChecked()
-        bias = self.sp_conv_bias.value()
+        # Učitavanje parametara iz controls.py
+        p = self.tab_conv.get_params()
 
-        actual_input_size = size + 2 if padding else size
-        if f_size > actual_input_size:
+        actual_input_size = p["size"] + 2 if p["padding"] else p["size"]
+        if p["f_size"] > actual_input_size:
             self.info_label.setText("Greška: Filter je veći od ulaza!")
             return
 
         self.engine = ConvolutionEngine(
-            input_size=size, channels=channels, filter_size=f_size,
-            stride=stride, padding=padding, bias=bias
+            input_size=p["size"], channels=p["channels"], filter_size=p["f_size"],
+            stride=p["stride"], padding=p["padding"], bias=p["bias"]
         )
 
-        self.animator = StepAnimator(
-            engine=self.engine, fig=self.fig, mode="conv",
-            on_step=self.update_ui_state, interval=800
-        )
-
+        self.animator = StepAnimator(self.engine, self.fig, "conv", self.update_ui_state, 800)
         self.animator.draw_current()
         self.canvas.draw()
         self.update_ui_state()
-
-    # ---------------------------------------------------------
-    # KONTROLE ZA POOLING (NOVO)
-    # ---------------------------------------------------------
-    def setup_pool_controls(self, parent_widget):
-        main_vbox = QVBoxLayout(parent_widget)
-        main_vbox.setContentsMargins(20, 20, 20, 20)
-        main_vbox.addStretch()
-
-        form_layout = QFormLayout()
-        form_layout.setVerticalSpacing(20)
-        form_layout.setHorizontalSpacing(15)
-
-        self.sp_pool_size = QSpinBox()
-        self.sp_pool_size.setRange(5, 10)
-        self.sp_pool_size.setValue(5)
-
-        self.sp_pool_chan = QSpinBox()
-        self.sp_pool_chan.setRange(1, 3)
-        self.sp_pool_chan.setValue(1)
-
-        self.sp_pool_filt = QSpinBox()
-        self.sp_pool_filt.setRange(2, 5)
-        self.sp_pool_filt.setValue(2)
-
-        self.sp_pool_stride = QSpinBox()
-        self.sp_pool_stride.setRange(1, 5)
-        self.sp_pool_stride.setValue(2)
-
-        self.cb_pool_type = QComboBox()
-        self.cb_pool_type.addItem("Max Pooling", "max")
-        self.cb_pool_type.addItem("Average Pooling", "avg")
-        self.cb_pool_type.addItem("L2 Pooling", "l2")
-        self.cb_pool_type.addItem("Weighted Average", "weighted")
-
-        form_layout.addRow("Dimenzija ulaza:", self.sp_pool_size)
-        form_layout.addRow("Broj kanala:", self.sp_pool_chan)
-        form_layout.addRow("Dimenzija filtera:", self.sp_pool_filt)
-        form_layout.addRow("Korak (stride):", self.sp_pool_stride)
-        form_layout.addRow("Tip pooling-a:", self.cb_pool_type)
-
-        main_vbox.addLayout(form_layout)
-        main_vbox.addSpacing(20)
-
-        btn_generate = QPushButton("Generiši")
-        btn_generate.setMinimumHeight(60)
-        btn_generate.setStyleSheet("""
-            background-color: #528bff; 
-            color: white; 
-            font-size: 20px; 
-            font-weight: bold; 
-            border-radius: 5px;
-        """)
-        btn_generate.clicked.connect(self.generate_pooling)
-
-        main_vbox.addWidget(btn_generate)
-        main_vbox.addStretch()
 
     def generate_pooling(self):
         if self.animator:
             self.animator.stop_auto()
 
-        size = self.sp_pool_size.value()
-        channels = self.sp_pool_chan.value()
-        f_size = self.sp_pool_filt.value()
-        stride = self.sp_pool_stride.value()
-        pool_type = self.cb_pool_type.currentData()
+        # Učitavanje parametara iz controls.py
+        p = self.tab_pool.get_params()
 
-        if f_size > size:
+        if p["f_size"] > p["size"]:
             self.info_label.setText("Greška: Filter je veći od ulaza!")
             return
 
         self.engine = PoolingEngine(
-            input_size=size, channels=channels, filter_size=f_size,
-            stride=stride, pool_type=pool_type
+            input_size=p["size"], channels=p["channels"], filter_size=p["f_size"],
+            stride=p["stride"], pool_type=p["pool_type"]
         )
 
-        self.animator = StepAnimator(
-            engine=self.engine, fig=self.fig, mode="pool",
-            on_step=self.update_ui_state, interval=800
-        )
-
+        self.animator = StepAnimator(self.engine, self.fig, "pool", self.update_ui_state, 800)
         self.animator.draw_current()
         self.canvas.draw()
         self.update_ui_state()
@@ -325,10 +190,8 @@ class MainWindow(QMainWindow):
             self.canvas.draw()
 
     def on_auto(self):
-        if not self.animator:
-            return
-        is_running = self.animator.toggle_auto()
-        if is_running:
+        if not self.animator: return
+        if self.animator.toggle_auto():
             self.btn_auto.setText("Pauza ⏸")
             self.btn_auto.setStyleSheet("background-color: #8c2626; color: white; font-weight: bold; font-size: 20px")
         else:
@@ -342,7 +205,7 @@ class MainWindow(QMainWindow):
             self.update_ui_state()
 
     # ---------------------------------------------------------
-    # OSVEŽAVANJE GUI-a (Progress bar i dugmići)
+    # OSVEŽAVANJE GUI-a
     # ---------------------------------------------------------
     def update_ui_state(self):
         curr, total = self.animator.get_progress()
@@ -366,9 +229,6 @@ class MainWindow(QMainWindow):
 
         self.canvas.draw()
 
-    # ---------------------------------------------------------
-    # PROMENA MODA (Tabova)
-    # ---------------------------------------------------------
     def on_tab_changed(self, index):
         if self.animator:
             self.animator.stop_auto()
@@ -376,6 +236,6 @@ class MainWindow(QMainWindow):
         if index == 0:
             self.generate_convolution()
         elif index == 1:
-            self.generate_pooling()  # <-- SADA SE POKREĆE POOLING LOGIKA
+            self.generate_pooling()
         elif index == 2:
             self.info_label.setText("Detekcija obrazaca uskoro...")
