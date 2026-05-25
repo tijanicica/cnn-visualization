@@ -15,8 +15,8 @@ COLOR_POSITIVE = (0.10, 0.90, 0.10, 0.80)  # jarko zelena
 COLOR_NEGATIVE = (0.90, 0.10, 0.10, 0.80)  # crvena
 COLOR_EDGE = (0.0, 0.0, 0.0, 0.8)  # crna ivica
 
-# Stil za okvir u kom se ispisuje formula - tamna pozadina, bela ivica, razvučeno
-FORMULA_BBOX = dict(boxstyle="round,pad=0.8", fc="#2c313c", ec="white", lw=1.5, alpha=0.95)
+# POVEĆAN OKVIR: pad=1.2 i deblja ivica (lw=2)
+FORMULA_BBOX = dict(boxstyle="round,pad=1.2", fc="#2c313c", ec="white", lw=2, alpha=0.95)
 
 
 def _cube_faces(x0: float, y0: float, z0: float, s: float) -> list:
@@ -80,7 +80,7 @@ def _draw_block(
                     cy = y0 + c * (cell_size + channel_gap) + s / 2
                     cz = z0 + (rows - 1 - r) * cell_size + s / 2
                     ax.text(cx, cy, cz, value_fmt.format(val), ha='center', va='center',
-                            fontsize=7, fontweight='bold', color='white', zorder=5)
+                            fontsize=13, fontweight='bold', color='white', zorder=5)
 
 
 def _set_ax_limits(ax, max_ext: float):
@@ -119,7 +119,6 @@ def _build_detailed_formula(region, filt, ch_sums, total_sum, bias, output_val):
 
     # Svaki kanal ispisujemo u jednoj širokoj liniji!
     for c in range(C):
-        # Spajamo sve elemente matrice za kanal C u jedan dugačak string
         r_flat = region[:, :, c].flatten()
         f_flat = filt[:, :, c].flatten()
 
@@ -165,13 +164,13 @@ def render_convolution(fig: Figure, engine, step: dict) -> None:
     _draw_block(axes[1], filt, origin=(0, 0, 0), face_color=COLOR_FILTER, value_fmt="{:.0f}", channel_gap=1.5)
     axes[1].set_title("FILTER", fontsize=11, fontweight='bold', pad=10, color='white')
 
-    # --- FORMULA: Postavljena direktno na FIGURE, skroz gore (y=0.97) ---
+    # --- FORMULA: Postavljena direktno na FIGURE ---
     formula = _build_detailed_formula(step["region"], filt, step['ch_sums'], step['conv_sum'], engine.bias,
                                       step['output_val'])
 
-    # Smanji font ako je filter veliki da bi stalo u širinu
-    f_size = 11 if F <= 3 else 9
-    fig.text(0.5, 0.97, formula, ha='center', va='top', color='white', fontsize=f_size, fontweight='bold',
+    # Smanji font samo ako je filter veliki da bi stalo u širinu, inače je veliki font 16
+    f_size = 16 if F <= 3 else 12
+    fig.text(0.5, 0.98, formula, ha='center', va='top', color='white', fontsize=f_size, fontweight='bold',
              bbox=FORMULA_BBOX)
 
     _draw_block(axes[2], out, origin=(0, 0, 0), face_color=COLOR_OUTPUT, value_fmt="{:.0f}", channel_gap=1.5)
@@ -186,8 +185,8 @@ def render_convolution(fig: Figure, engine, step: dict) -> None:
         ax.view_init(elev=20, azim=-55)
 
     _add_legend(fig)
-    # Spuštamo grafike dole (top: 0.82) da oslobodimo 18% ekrana na vrhu za formulu
-    fig.tight_layout(rect=[0, 0.05, 1, 0.82])
+    # Dodatno spuštanje grafika (top=0.78 umesto 0.82) zbog ogromnog okvira za formulu na vrhu
+    fig.tight_layout(rect=[0, 0.05, 1, 0.78])
 
 
 # ==================================================================
@@ -224,7 +223,7 @@ def render_pooling(fig: Figure, engine, step: dict) -> None:
         pairs = [f"{r_flat[i]:.0f}×{w_flat[i]:.0f}" for i in range(len(r_flat))]
         formula = f"W_AVG = [ {' + '.join(pairs)} ] / Suma_težina({np.sum(engine.weights)}) = {result:.2f}"
 
-    fig.text(0.5, 0.97, formula, ha='center', va='top', color='white', fontsize=11, fontweight='bold',
+    fig.text(0.5, 0.98, formula, ha='center', va='top', color='white', fontsize=16, fontweight='bold',
              bbox=FORMULA_BBOX)
 
     ax_idx = 1
@@ -243,7 +242,7 @@ def render_pooling(fig: Figure, engine, step: dict) -> None:
         ax.view_init(elev=20, azim=-55)
 
     _add_legend(fig)
-    fig.tight_layout(rect=[0, 0.05, 1, 0.82])
+    fig.tight_layout(rect=[0, 0.05, 1, 0.78])
 
 
 # ==================================================================
@@ -285,7 +284,7 @@ def render_pattern(fig: Figure, engine, step: dict, filter_idx: int) -> None:
     if label:
         formula += f"\n{label}"
 
-    fig.text(0.5, 0.97, formula, ha='center', va='top', color='white', fontsize=11, fontweight='bold',
+    fig.text(0.5, 0.98, formula, ha='center', va='top', color='white', fontsize=16, fontweight='bold',
              bbox=FORMULA_BBOX)
 
     _draw_block(axes[2], engine.output_maps[filter_idx], origin=(0, 0, 0), face_color=COLOR_OUTPUT, value_fmt="{:.0f}")
@@ -296,4 +295,4 @@ def render_pattern(fig: Figure, engine, step: dict, filter_idx: int) -> None:
         ax.view_init(elev=20, azim=-55)
 
     _add_legend(fig)
-    fig.tight_layout(rect=[0, 0.05, 1, 0.82])
+    fig.tight_layout(rect=[0, 0.05, 1, 0.78])

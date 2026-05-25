@@ -49,7 +49,7 @@ class MainWindow(QMainWindow):
         # --- LEVI PANEL: Tabovi i Kontrole ---
         left_panel = QWidget()
         # 1. POVEĆANA ŠIRINA NA 500px DA BI STAO FONT OD 25px!
-        left_panel.setFixedWidth(500)
+        left_panel.setFixedWidth(600)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -57,6 +57,15 @@ class MainWindow(QMainWindow):
         # 2. OVE DVE LINIJE FORSIRAJU TABOVE DA STANU BEZ STRELICA!
         self.tabs.tabBar().setExpanding(True)
         self.tabs.setUsesScrollButtons(False)
+        self.tabs.setStyleSheet("""
+                    QTabBar::tab {
+                        width: 196px;       /* Širina svakog taba */
+                        height: 40px;       /* Opciono: visina taba da izgleda masivnije */
+                        font-size: 25px;    /* Opciono: povećaš font naslova taba */
+                        
+                    }
+                """)
+
 
         # Tab 1: Konvolucija
         self.tab_conv = QWidget()
@@ -67,9 +76,11 @@ class MainWindow(QMainWindow):
         self.tab_pool = QWidget()
         self.tabs.addTab(self.tab_pool, "Pooling")
 
+
         # Tab 3: Pattern
         self.tab_pattern = QWidget()
         self.tabs.addTab(self.tab_pattern, "Detekcija")
+
 
         left_layout.addWidget(self.tabs)
 
@@ -186,7 +197,7 @@ class MainWindow(QMainWindow):
         main_vbox.addSpacing(20)
 
         # Veliko, centrirano dugme
-        btn_generate = QPushButton("Generiši novo")
+        btn_generate = QPushButton("Generiši")
         btn_generate.setMinimumHeight(60)  # Veće i lakše za kliknuti
         btn_generate.setStyleSheet("""
             background-color: #528bff; 
