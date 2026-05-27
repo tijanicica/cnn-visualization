@@ -2,7 +2,7 @@
 import cv2
 import numpy as np
 import os
-from PyQt5.QtWidgets import QFileDialog, QMessageBox, QProgressDialog
+from PyQt5.QtWidgets import QFileDialog, QMessageBox, QProgressDialog, QApplication
 from PyQt5.QtCore import Qt
 
 
@@ -27,14 +27,19 @@ class VideoExporter:
         else:
             total_steps = len(engine.steps)
 
-        progress = QProgressDialog("Priprema za snimanje...", "Otkaži", 0, total_steps, parent_widget)
+        # 1. Kreiranje i konfiguracija popup prozora
+        progress = QProgressDialog("Snimanje u toku...", "Otkaži", 0, total_steps, parent_widget)
         progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowTitle("Video Export")
+        progress.setMinimumWidth(300)  # Forsiramo širinu da ne bude kvadratić
         progress.show()
+
+        # OVO JE KLJUČNO: Tera Qt da odmah nacrta prozor pre nego što krene teška obrada
+        QApplication.processEvents()
 
         saved_step = engine.current_step
         engine.reset()
 
-        # Brzina: 1.5 frejma u sekundi (veoma sporo i pregledno)
         fps = 1.5
         width, height = self.fig.canvas.get_width_height()
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -46,52 +51,39 @@ class VideoExporter:
                 if progress.wasCanceled():
                     break
 
-                # 1. Nacrtaj trenutno stanje
+                # Pomeranje animacije
                 self.animator.draw_current()
-
-                # 2. DODAVANJE NATPISA "SNIMANJE U TOKU" DIREKTNO NA GRAFIK
-                # Postavljamo tekst u gornji levi ugao (koordinate 0.02, 0.95 u odnosu na sliku)
-                # status_text = "SNIMANJE U TOKU..."
-                # label = self.fig.text(0.02, 0.96, status_text,
-                #                       color='red', fontsize=12, fontweight='bold',
-                #                       bbox=dict(facecolor='white', edgecolor='red', alpha=0.9))
-
                 self.fig.canvas.draw()
 
-                # 3. Pretvori u OpenCV format
+                # Snimanje frejma
                 img_rgba = np.array(self.fig.canvas.buffer_rgba())
                 img_bgr = cv2.cvtColor(img_rgba, cv2.COLOR_RGBA2BGR)
-
-                # 4. Upiši frejm
                 out.write(img_bgr)
 
-                # 5. Ukloni labelu da se ne bi duplirala u sledećem koraku rendera
-                #label.remove()
-
+                # Pomeranje logike
                 engine.next_step()
-                progress.setLabelText("Snimanje u toku")
+
+                # 2. AŽURIRANJE POPUP-A
                 progress.setValue(i + 1)
 
-            # --- DODAVANJE PAUZE NA KRAJU (Završni ekran stoji 4 sekunde) ---
-            if not progress.wasCanceled() and img_bgr is not None:
-                # Ponovo nacrtaj poslednje stanje bez natpisa "Snimanje u toku" za čist kraj
-                self.animator.draw_current()
-                self.fig.canvas.draw()
-                final_rgba = np.array(self.fig.canvas.buffer_rgba())
-                final_bgr = cv2.cvtColor(final_rgba, cv2.COLOR_RGBA2BGR)
+                # OVO REŠAVA VAŠ PROBLEM: Dopušta Windowsu da osveži prozorčić
+                QApplication.processEvents()
 
-                for _ in range(int(fps * 1.5)):
-                    out.write(final_bgr)
+            # Pauza na kraju
+            if not progress.wasCanceled() and img_bgr is not None:
+                for _ in range(int(fps * 3)):
+                    out.write(img_bgr)
+                    QApplication.processEvents()  # Da se ne zamrzne ni na kraju
 
             out.release()
             if not progress.wasCanceled():
-                QMessageBox.information(parent_widget, "Uspeh", f"Video je uspešno snimljen!\nNa putanju: {file_path}")
+                QMessageBox.information(parent_widget, "Uspeh", f"Video je uspešno snimljen!")
 
         except Exception as e:
             if 'out' in locals(): out.release()
             QMessageBox.critical(parent_widget, "Greška", f"Greška pri snimanju:\n{str(e)}")
 
         finally:
-            # Vrati korisnika tamo gde je bio
             engine.current_step = saved_step
             self.animator.draw_current()
+            QApplication.processEvents()
