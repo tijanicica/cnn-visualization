@@ -173,45 +173,73 @@ def render_convolution(fig: Figure, engine, step: dict) -> None:
 # ==================================================================
 # 2. POOLING
 # ==================================================================
+# ==================================================================
+# 2. POOLING - ISPRAVLJENO ZA MULTI-CHANNEL
+# ==================================================================
 def render_pooling(fig: Figure, engine, step: dict) -> None:
     fig.clear()
     has_weights = engine.pool_type == "weighted"
+    # Ako ima težina (Weighted Avg), trebaju nam 3 subplota, inače 2
     axes = [fig.add_subplot(131 if has_weights else 121, projection='3d'),
             fig.add_subplot(132 if has_weights else 122, projection='3d')]
     if has_weights: axes.append(fig.add_subplot(133, projection='3d'))
+
     inp, H, F = engine.input_map, engine.input_size, engine.filter_size
+    C = engine.channels  # Uzimamo broj kanala
+
+    # Highlight maska za aktivni region
     mask = np.zeros((H, H), dtype=bool)
     mask[step["in_row"]: step["in_row"] + F, step["in_col"]: step["in_col"] + F] = True
-    _draw_block(axes[0], inp, origin=(0, 0, 0), highlight_mask=mask, values_mask=mask)
+
+    # 1. Ulaz (Crtamo sve kanale sa razmakom 1.5)
+    _draw_block(axes[0], inp, origin=(0, 0, 0), highlight_mask=mask, values_mask=mask, channel_gap=1.5)
     axes[0].set_title(f"ULAZ\n{engine.pool_type.upper()} pooling", fontsize=11, fontweight='bold', pad=10,
                       color='white')
+
+    # --- FORMULA ZA POOLING (Fokus na Kanal 1) ---
     vals = step["regions"][0].flatten()
     result = step["output_vals"][0]
+
     if engine.pool_type == "max":
-        formula = f"MAX( {', '.join(map(str, vals.astype(int)))} ) = {result:.1f}"
+        formula = f"K1: MAX( {', '.join(map(str, vals.astype(int)))} ) = {result:.1f}"
     elif engine.pool_type == "avg":
-        formula = f"AVG( {', '.join(map(str, vals.astype(int)))} ) = {result:.2f}"
+        formula = f"K1: AVG( {', '.join(map(str, vals.astype(int)))} ) = {result:.2f}"
     elif engine.pool_type == "l2":
-        formula = f"L2 NORM( {', '.join(map(str, vals.astype(int)))} ) = {result:.2f}"
+        formula = f"K1: L2 NORM( {', '.join(map(str, vals.astype(int)))} ) = {result:.2f}"
     else:
+        # Prikaz postupka za weighted average
         r_flat = step["regions"][0].flatten()
         w_flat = engine.weights.flatten()
         pairs = [f"{r_flat[i]:.0f}×{w_flat[i]:.0f}" for i in range(len(r_flat))]
-        formula = f"W_AVG = [ {' + '.join(pairs)} ] / Suma_težina({np.sum(engine.weights)}) = {result:.2f}"
+        formula = f"K1 W_AVG: [ {' + '.join(pairs)} ] / Suma_težina({np.sum(engine.weights)}) = {result:.2f}"
+
+    if C > 1:
+        formula += f"\n(Isto se primenjuje na ostalih {C - 1} kanala)"
+
     fig.text(0.5, 0.98, formula, ha='center', va='top', color='white', fontsize=16, fontweight='bold',
              bbox=FORMULA_BBOX)
+
     ax_idx = 1
+    # 2. Težine (samo ako je Weighted Avg)
     if has_weights:
         _draw_block(axes[1], engine.weights, origin=(0, 0, 0), face_color=COLOR_FILTER, value_fmt="{:.0f}")
         axes[1].set_title("TEŽINE", fontsize=11, fontweight='bold', pad=10, color='white')
         ax_idx = 2
-    out_ch0 = engine.output_map[:, :, 0]
-    _draw_block(axes[ax_idx], out_ch0, origin=(0, 0, 0), face_color=COLOR_OUTPUT, value_fmt="{:.1f}")
-    axes[ax_idx].set_title(f"IZLAZ\nNova vrednost: {step['output_vals'][0]:.1f}", fontsize=11, fontweight='bold',
-                           pad=10, color='white')
+
+    # 3. IZLAZ - PROMENA: Sada šaljemo CELU mapu (engine.output_map) umesto samo engine.output_map[:, :, 0]
+    out_map = engine.output_map
+    _draw_block(axes[ax_idx], out_map, origin=(0, 0, 0), face_color=COLOR_OUTPUT, value_fmt="{:.1f}", channel_gap=1.5)
+    axes[ax_idx].set_title(f"IZLAZ\nNova vrednost (K1): {result:.1f}", fontsize=11, fontweight='bold', pad=10,
+                           color='white')
+
+    # Postavljanje granica osa (uzimajući u obzir razmak kanala)
+    y_extent = C * 1.0 + (C - 1) * 1.5
+    max_ext = max(H, F, engine.output_size, y_extent)
+
     for ax in axes:
-        _set_ax_limits(ax, max(H, F, engine.output_size))
+        _set_ax_limits(ax, max_ext)
         ax.view_init(elev=20, azim=-55)
+
     _add_legend(fig)
     fig.tight_layout(rect=[0, 0.05, 1, 0.78])
 
