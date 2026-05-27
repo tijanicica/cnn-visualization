@@ -22,7 +22,7 @@ from visualization.step_animator import StepAnimator
 from gui.controls import ConvControlsTab, PoolControlsTab
 from core.pattern import PatternEngine
 from gui.controls import ConvControlsTab, PoolControlsTab, PatternControlsTab
-
+from visualization.exporter import VideoExporter
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -119,6 +119,10 @@ class MainWindow(QMainWindow):
         self.btn_reset.setStyleSheet("font-size: 20px")
         self.btn_reset.clicked.connect(self.on_reset)
 
+        self.btn_export = QPushButton("📹 Video")
+        self.btn_export.setStyleSheet("background-color: #4a4e69; color: white; font-size: 20px;")
+        self.btn_export.clicked.connect(self.on_export_video)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
 
@@ -126,6 +130,7 @@ class MainWindow(QMainWindow):
         playback_layout.addWidget(self.btn_auto)
         playback_layout.addWidget(self.btn_next)
         playback_layout.addWidget(self.btn_reset)
+        playback_layout.addWidget(self.btn_export)
 
         center_layout.addLayout(playback_layout)
         center_layout.addWidget(self.progress_bar)
@@ -265,3 +270,14 @@ class MainWindow(QMainWindow):
         elif index == 2:
             self.generate_pattern()
 
+    def on_export_video(self):
+        if not self.animator:
+            return
+
+        # Zaustavi auto-play ako radi
+        self.animator.stop_auto()
+        self.btn_auto.setText("Auto ▶")
+        self.btn_auto.setStyleSheet("background-color: #235a39; color: white; font-weight: bold; font-size: 20px")
+
+        exporter = VideoExporter(self.fig, self.animator)
+        exporter.export(self)
