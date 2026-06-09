@@ -1,742 +1,334 @@
-"""
-visualization/renderer_3d.py
------------------------------
-Hibridni layout:
-  - Gornji red:  3D blokovi (Matplotlib mpl_toolkits) — ulaz, filter, izlaz
-  - Donji panel: 2D prikaz računanja trenutnog koraka (patch × filter = produkti → Σ)
-
-Svaka "kocka" u 3D prikazu = gornje lice (popunjen quad) + 4 wireframe linije prema dole.
-Brojevi se ne ispisuju u 3D blokovima (prenatrpano) — sve brojeve vidiš u 2D panelu.
-"""
-
+# visualization/renderer_3d.py
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.gridspec import GridSpec
-from matplotlib.patches import FancyArrowPatch
-from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from typing import Optional
+from matplotlib.figure import Figure
 
-matplotlib.rcParams['font.family'] = 'monospace'
+# ------------------------------------------------------------------
+# Boje (RGBA)
+# ------------------------------------------------------------------
+COLOR_INPUT = (0.20, 0.60, 0.86, 0.40)  # plava, providna
+COLOR_FILTER = (0.95, 0.50, 0.10, 0.60)  # narandžasta
+COLOR_ACTIVE = (0.90, 0.10, 0.50, 0.70)  # roze/magenta (podrazumevana)
+COLOR_OUTPUT = (0.60, 0.20, 0.80, 0.60)  # ljubičasta
+COLOR_POSITIVE = (0.00, 0.80, 0.00, 0.85)  # zelena - DETEKCIJA
+COLOR_NEGATIVE = (0.80, 0.00, 0.00, 0.85)  # crvena - NEGATIVNA DETEKCIJA
+COLOR_EDGE = (0.0, 0.0, 0.0, 0.8)  # crna ivica
 
-# ─── Boje ────────────────────────────────────────────────────────────────────
-
-C_BG            = "#0a0f1e"
-C_INPUT_FACE    = "#1a3a5c"
-C_INPUT_EDGE    = "#2196F3"
-C_FILTER_FACE   = "#3a1a1a"
-C_FILTER_EDGE   = "#FF5722"
-C_ACTIVE_FACE   = "#1a3a1a"
-C_ACTIVE_EDGE   = "#00E676"
-C_OUTPUT_FACE   = "#2a1a3a"
-C_OUTPUT_EDGE   = "#7C4DFF"
-C_OUTPUT_ACTIVE = "#9C27B0"
-C_EMPTY_FACE    = "#111118"
-C_EMPTY_EDGE    = "#2a2a3a"
-C_POSITIVE_FACE = "#0a2a0a"
-C_POSITIVE_EDGE = "#00C853"
-C_NEGATIVE_FACE = "#2a0a0a"
-C_NEGATIVE_EDGE = "#FF1744"
-C_TEXT_PRIMARY  = "#E0F7FA"
-C_TEXT_DIM      = "#546E7A"
-C_PANEL_BG      = "#0d1426"
-C_GRID_LINE     = "#1a2a3a"
-C_ACCENT        = "#00E5FF"
+FORMULA_BBOX = dict(boxstyle="round,pad=1.2", fc="#2c313c", ec="white", lw=2, alpha=0.95)
 
 
-# ─── 3D helpers ──────────────────────────────────────────────────────────────
-
-def _top_face(x: float, y: float, z: float, dx=0.82, dy=0.82) -> list:
-    """
-    Gornje lice kocke — jedan popunjen paralelogram (quad).
-    x, y, z  — donji lijevi ugao kocke
-    dx, dy   — veličina (< 1.0 ostavlja gap između kocki)
-    """
-    return [(x,    y,    z),
-            (x+dx, y,    z),
-            (x+dx, y+dy, z),
-            (x,    y+dy, z)]
+def _cube_faces(x0: float, y0: float, z0: float, s: float) -> list:
+    x1, y1, z1 = x0 + s, y0 + s, z0 + s
+    return [
+        [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0)],
+        [(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)],
+        [(x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1)],
+        [(x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1)],
+        [(x0, y0, z0), (x0, y1, z0), (x0, y1, z1), (x0, y0, z1)],
+        [(x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1)],
+    ]
 
 
-def _draw_cell(ax: Axes3D,
-               col: int, row: int, ch: int,
-               face_color: str, edge_color: str,
-               alpha: float = 0.82,
-               wire_alpha: float = 0.45,
-               dz: float = 0.75):
-    """
-    Crta jednu ćeliju kao:
-      - popunjeno gornje lice na visini z=ch+dz
-      - 4 tanke wireframe linije od gornjeg lica prema dole (z=ch)
-
-    col, row  — pozicija u 2D mapi
-    ch        — kanal (Z osa — kanali se slažu jedan iza drugog)
-    dz        — visina kocke (samo za wireframe, gornje lice je uvijek na vrhu)
-    """
-    dx = dy = 0.82
-    x, y, z_top = col, row, ch + dz
-
-    # Gornje lice
-    face = _top_face(x, y, z_top, dx, dy)
-    poly = Poly3DCollection([face], alpha=alpha, zorder=ch)
-    poly.set_facecolor(face_color)
-    poly.set_edgecolor(edge_color)
-    poly.set_linewidth(0.9)
-    ax.add_collection3d(poly)
-
-    # Wireframe — 4 vertikalne linije
-    corners = [(x, y), (x+dx, y), (x+dx, y+dy), (x, y+dy)]
-    for cx, cy in corners:
-        ax.plot([cx, cx], [cy, cy], [ch, z_top],
-                color=edge_color, linewidth=0.55,
-                alpha=wire_alpha, zorder=ch - 1)
-
-
-def _draw_block(ax: Axes3D,
-                data: np.ndarray,
-                origin: tuple = (0, 0, 0),
-                face_color: str = C_INPUT_FACE,
-                edge_color: str = C_INPUT_EDGE,
-                active_mask: Optional[np.ndarray] = None,
-                empty_mask: Optional[np.ndarray] = None,
-                match_mask: Optional[dict] = None,
-                alpha: float = 0.82):
-    """
-    Crta cijeli 3D blok kocki za datu mapu.
-
-    data        — (H, W) ili (H, W, C)
-    origin      — (x0, y0, z0) polazna tačka u 3D prostoru
-    active_mask — bool niz (H, W); True = zeleni highlight
-    empty_mask  — bool niz (H, W); True = tamna "čeka" kocka
-    match_mask  — dict {(r,c): 'positive'|'negative'} za pattern mod
-    """
+def _draw_block(
+        ax, data: np.ndarray, origin: tuple, cell_size: float = 1.0, gap: float = 0.08, channel_gap: float = 1.5,
+        face_color=COLOR_INPUT, highlight_mask: np.ndarray = None, highlight_color=COLOR_ACTIVE,
+        color_matrix: np.ndarray = None, show_values: bool = True, values_mask: np.ndarray = None,
+        value_fmt: str = "{}", font_size=13  # <--- DODATO font_size sa default 13
+):
     if data.ndim == 2:
         data = data[:, :, np.newaxis]
 
-    H, W, C = data.shape
+    rows, cols, channels = data.shape
     x0, y0, z0 = origin
+    s = cell_size - gap
+    all_faces, all_colors = [], []
 
-    for ch in range(C):
-        for r in range(H):
-            for c in range(W):
-                x = x0 + c
-                # Redovi: r=0 je "gore" — u 3D prostoru veći Y ide "nazad"
-                y = y0 + (H - 1 - r)
-                z = z0 + ch
+    for c in range(channels):
+        for r in range(rows):
+            for col in range(cols):
+                val = data[r, col, c]
+                if np.isnan(val): continue
 
-                # Odredi boje
-                is_active = active_mask is not None and active_mask[r, c]
-                is_empty  = empty_mask  is not None and empty_mask[r, c]
-                match     = match_mask.get((r, c)) if match_mask else None
+                cx = x0 + col * cell_size
+                cy = y0 + c * (cell_size + channel_gap)
+                cz = z0 + (rows - 1 - r) * cell_size
+                all_faces.extend(_cube_faces(cx, cy, cz, s))
 
-                if match == 'positive':
-                    fc, ec = C_POSITIVE_FACE, C_POSITIVE_EDGE
-                elif match == 'negative':
-                    fc, ec = C_NEGATIVE_FACE, C_NEGATIVE_EDGE
-                elif is_active:
-                    fc, ec = C_ACTIVE_FACE, C_ACTIVE_EDGE
-                elif is_empty:
-                    fc, ec = C_EMPTY_FACE, C_EMPTY_EDGE
-                    alpha  = 0.4
+                if color_matrix is not None:
+                    color = color_matrix[r, col]
+                elif highlight_mask is not None and highlight_mask[r, col]:
+                    color = highlight_color
                 else:
-                    fc, ec = face_color, edge_color
+                    color = face_color
+                all_colors.extend([color] * 6)
 
-                _draw_cell(ax, x, y, z, fc, ec, alpha=alpha)
+    if not all_faces: return
 
+    poly = Poly3DCollection(all_faces, facecolors=all_colors, edgecolors=COLOR_EDGE, linewidths=0.3)
+    ax.add_collection3d(poly)
 
-def _style_ax(ax: Axes3D, title: str,
-              xlim: tuple, ylim: tuple, zlim: tuple,
-              elev: float = 22, azim: float = -52):
-    """Stilizuje 3D axis — tamna pozadina, bez gridova, kut gledanja."""
-    ax.set_facecolor(C_BG)
-    ax.set_xlim(*xlim)
-    ax.set_ylim(*ylim)
-    ax.set_zlim(*zlim)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_zticks([])
-    for pane in [ax.xaxis.pane, ax.yaxis.pane, ax.zaxis.pane]:
-        pane.fill = False
-        pane.set_edgecolor(C_GRID_LINE)
-    ax.grid(False)
-    ax.set_title(title, color=C_TEXT_PRIMARY,
-                 fontsize=8.5, pad=4, fontweight='bold')
-    ax.view_init(elev=elev, azim=azim)
+    if show_values:
+        for c in range(channels):
+            for r in range(rows):
+                for col in range(cols):
+                    if values_mask is not None and not values_mask[r, col]: continue
+                    val = data[r, col, c]
+                    if np.isnan(val): continue
+                    cx = x0 + col * cell_size + s / 2
+                    cy = y0 + c * (cell_size + channel_gap) + s / 2
+                    cz = z0 + (rows - 1 - r) * cell_size + s / 2
+                    ax.text(cx, cy, cz, value_fmt.format(val), ha='center', va='center',
+                            fontsize=font_size, fontweight='bold', color='white', zorder=5)
 
 
-# ─── 2D panel helpers ────────────────────────────────────────────────────────
-
-def _draw_2d_grid(ax,
-                  data: np.ndarray,
-                  x0: float, y0: float,
-                  cell_w: float = 0.28, cell_h: float = 0.28,
-                  face_color: str = C_INPUT_FACE,
-                  edge_color: str = C_INPUT_EDGE,
-                  highlight_rc: Optional[tuple] = None,
-                  highlight_color: str = C_ACTIVE_EDGE,
-                  fmt: str = "{}",
-                  fontsize: float = 9.5):
-    """
-    Crta 2D grid u axes koordinatama (0..1 prostor).
-    data        — 2D numpy niz
-    x0, y0      — gornji lijevi ugao u axes koordinatama
-    cell_w/h    — veličina ćelije
-    highlight_rc — (r, c) ćelija koja se ističe drugom bojom ivice
-    fmt         — format string za vrijednost, npr. "{:.1f}"
-    """
-    H, W = data.shape
-    for r in range(H):
-        for c in range(W):
-            px = x0 + c * cell_w
-            py = y0 + r * cell_h
-
-            is_hl = highlight_rc == (r, c)
-            ec = highlight_color if is_hl else edge_color
-            lw = 1.5 if is_hl else 0.7
-
-            rect = mpatches.FancyBboxPatch(
-                (px, py), cell_w * 0.92, cell_h * 0.92,
-                boxstyle="round,pad=0.01",
-                facecolor=face_color,
-                edgecolor=ec,
-                linewidth=lw,
-                transform=ax.transAxes,
-                clip_on=False,
-                zorder=3,
-            )
-            ax.add_patch(rect)
-
-            val = data[r, c]
-            if isinstance(val, (float, np.floating)) and np.isnan(val):
-                text = "?"
-                tc = C_TEXT_DIM
-            else:
-                text = fmt.format(val)
-                tc = C_ACCENT if is_hl else C_TEXT_PRIMARY
-
-            ax.text(px + cell_w * 0.46, py + cell_h * 0.46, text,
-                    ha='center', va='center',
-                    fontsize=fontsize, color=tc, fontweight='bold',
-                    transform=ax.transAxes, zorder=4)
+def _set_ax_limits(ax, max_ext: float):
+    ax.set_xlim(0, max_ext)
+    ax.set_ylim(0, max_ext)
+    ax.set_zlim(0, max_ext)
+    ax.set_axis_off()
+    ax.set_facecolor('white')
 
 
-def _operator_text(ax, x: float, y: float, symbol: str, fontsize=16):
-    """Crta operator simbol (×, =, +, Σ) u 2D panelu."""
-    ax.text(x, y, symbol,
-            ha='center', va='center',
-            fontsize=fontsize, color=C_TEXT_DIM,
-            fontweight='bold', transform=ax.transAxes, zorder=4)
-
-
-def _draw_calc_panel(ax,
-                     patch: np.ndarray,
-                     kernel: np.ndarray,
-                     products: np.ndarray,
-                     conv_sum: float,
-                     output_val: float,
-                     out_row: int, out_col: int,
-                     bias: int = 0,
-                     pool_type: Optional[str] = None,
-                     weights: Optional[np.ndarray] = None):
-    """
-    Crta donji 2D panel s računanjem trenutnog koraka.
-
-    Layout (za 3×3):
-      [patch] ×  [kernel/weights]  =  [products]   Σ=X  (+bias)  →  rezultat
-
-    Za pooling: umjesto kernel-a prikazujemo prozor s bojama za max/avg/l2,
-    ili težine za weighted avg.
-    """
-    ax.set_facecolor(C_PANEL_BG)
-    ax.axis('off')
-
-    H, W = patch.shape
-    cw = ch_ = min(0.072, 0.72 / max(W, H))  # veličina ćelije, skalira sa grijom
-
-    # Pozicije blokova (u axes koordinatama 0..1)
-    margin_top = 0.08
-    patch_x0   = 0.02
-    kern_x0    = patch_x0 + W * cw + 0.10   # operator × + razmak
-    prod_x0    = kern_x0  + W * cw + 0.10
-    sigma_x    = prod_x0  + W * cw + 0.06
-    result_x   = sigma_x  + 0.12
-
-    # Labele iznad blokova
-    lbl_y = 1.0 - margin_top + 0.01
-    for lbl, lx in [("patch iz ulaza", patch_x0 + W*cw/2),
-                    ("filter" if pool_type is None else
-                     ("težine" if pool_type == "weighted" else "prozor"),
-                     kern_x0 + W*cw/2),
-                    ("element×element", prod_x0 + W*cw/2)]:
-        ax.text(lx, lbl_y, lbl,
-                ha='center', va='bottom', fontsize=7,
-                color=C_TEXT_DIM, transform=ax.transAxes)
-
-    grid_y0 = 1.0 - margin_top - H * ch_ - 0.02   # gornji lijevi ugao gridova
-
-    # Patch
-    _draw_2d_grid(ax, patch, patch_x0, grid_y0,
-                  cell_w=cw, cell_h=ch_,
-                  face_color=C_INPUT_FACE, edge_color=C_INPUT_EDGE)
-
-    # Operator ×
-    _operator_text(ax, kern_x0 - 0.055, grid_y0 + H*ch_/2, "×")
-
-    # Kernel ili težine
-    if pool_type == "weighted" and weights is not None:
-        kern_display = weights.astype(float)
-        kfc, kec = "#2a1a3a", "#AA00FF"
-        kfmt = "{:.0f}"
-    elif pool_type is not None:
-        # Za max/avg/l2 prikazujemo patch i tip operacije
-        kern_display = patch
-        kfc, kec = C_FILTER_FACE, C_FILTER_EDGE
-        kfmt = "{}"
-    else:
-        kern_display = kernel
-        kfc, kec = C_FILTER_FACE, C_FILTER_EDGE
-        kfmt = "{}"
-
-    _draw_2d_grid(ax, kern_display, kern_x0, grid_y0,
-                  cell_w=cw, cell_h=ch_,
-                  face_color=kfc, edge_color=kec, fmt=kfmt)
-
-    # Operator =
-    _operator_text(ax, prod_x0 - 0.055, grid_y0 + H*ch_/2, "=")
-
-    # Produkti (ili skip za pooling)
-    if pool_type is None:
-        _draw_2d_grid(ax, products, prod_x0, grid_y0,
-                      cell_w=cw, cell_h=ch_,
-                      face_color="#111a11", edge_color="#2a3a2a",
-                      fmt="{}")
-
-    # Σ i rezultat
-    sigma_y = grid_y0 + H*ch_/2
-
-    if pool_type is None:
-        # Konvolucija: Σ + opcioni bias
-        ax.text(sigma_x, sigma_y + 0.08, "Σ =",
-                ha='left', va='center', fontsize=8,
-                color=C_TEXT_DIM, transform=ax.transAxes)
-        ax.text(sigma_x + 0.01, sigma_y - 0.02,
-                f"{int(conv_sum)}",
-                ha='left', va='center', fontsize=14,
-                color=C_TEXT_PRIMARY, fontweight='bold',
-                transform=ax.transAxes)
-        if bias != 0:
-            ax.text(sigma_x, sigma_y - 0.12,
-                    f"+ bias({bias})",
-                    ha='left', va='center', fontsize=7.5,
-                    color=C_TEXT_DIM, transform=ax.transAxes)
-
-        # Linija i rezultat
-        ax.plot([result_x - 0.01, result_x + 0.08], [sigma_y - 0.16]*2,
-                color=C_GRID_LINE, linewidth=0.8,
-                transform=ax.transAxes)
-        ax.text(result_x + 0.035, sigma_y - 0.26,
-                f"= {int(output_val)}",
-                ha='center', va='center', fontsize=14,
-                color=C_OUTPUT_ACTIVE, fontweight='bold',
-                transform=ax.transAxes)
-        ax.text(result_x + 0.035, sigma_y - 0.38,
-                f"izlaz[{out_row},{out_col}]",
-                ha='center', va='center', fontsize=7.5,
-                color=C_TEXT_DIM, transform=ax.transAxes)
-
-    else:
-        # Pooling: formula tekst
-        vals = patch.flatten()
-        if pool_type == "max":
-            op_str = f"max({', '.join(map(str, vals))}) = {output_val:.2f}"
-        elif pool_type == "avg":
-            op_str = f"avg({', '.join(map(str, vals))}) = {output_val:.2f}"
-        elif pool_type == "l2":
-            op_str = f"L2 = √Σx² = {output_val:.2f}"
-        else:
-            op_str = f"Σ(w·x)/Σw = {output_val:.2f}"
-
-        ax.text(sigma_x, sigma_y + 0.05, op_str,
-                ha='left', va='center', fontsize=8.5,
-                color=C_TEXT_PRIMARY, fontweight='bold',
-                transform=ax.transAxes)
-        ax.text(sigma_x, sigma_y - 0.12,
-                f"→  izlaz[{out_row},{out_col}]",
-                ha='left', va='center', fontsize=8,
-                color=C_OUTPUT_ACTIVE,
-                transform=ax.transAxes)
-
-
-# ─── Konvolucija ─────────────────────────────────────────────────────────────
-
-def render_conv_step(step, config, fig=None):
-    """
-    Crta jedan korak konvolucije.
-
-    step   — ConvStep dataclass (vidi core/convolution.py)
-    config — ConvConfig dataclass
-    fig    — postojeći Figure (ako None, kreira novi)
-
-    Layout:
-      [3D ulaz] [3D filter] [3D izlaz]   ← gornji red (visina 3)
-      [     2D računanje panel         ]  ← donji red (visina 2)
-    """
-    if fig is None:
-        fig = plt.figure(figsize=(14, 7), facecolor=C_BG)
-    else:
-        fig.clear()
-        fig.patch.set_facecolor(C_BG)
-
-    gs = GridSpec(2, 3, figure=fig,
-                  height_ratios=[3, 2],
-                  hspace=0.35, wspace=0.15,
-                  left=0.02, right=0.98,
-                  top=0.93, bottom=0.04)
-
-    ax1 = fig.add_subplot(gs[0, 0], projection='3d')
-    ax2 = fig.add_subplot(gs[0, 1], projection='3d')
-    ax3 = fig.add_subplot(gs[0, 2], projection='3d')
-    ax_calc = fig.add_subplot(gs[1, :])
-
-    H, W, C = step.input_padded.shape
-    k = config.kernel_size
-    out_size = step.output_map.shape[0]
-
-    # Active mask — region koji filter trenutno pokriva
-    active = np.zeros((H, W), dtype=bool)
-    for dr in range(k):
-        for dc in range(k):
-            active[step.filter_row + dr, step.filter_col + dc] = True
-
-    # Empty mask — izlazne ćelije koje još nisu popunjene
-    empty = np.ones((out_size, out_size), dtype=bool)
-    for idx in range(step.step_idx + 1):
-        ri, ci = divmod(idx, out_size)
-        if ri < out_size:
-            empty[ri, ci] = False
-
-    # ── 3D blokovi ────────────────────────────────────────────────────
-    _draw_block(ax1, step.input_padded,
-                face_color=C_INPUT_FACE, edge_color=C_INPUT_EDGE,
-                active_mask=active)
-    pad_str = " (padded)" if config.padding else ""
-    _style_ax(ax1, f"Ulaz {config.input_size}×{config.input_size}×{C}{pad_str}",
-              xlim=(-0.5, W+0.5), ylim=(-0.5, W+0.5), zlim=(-0.2, C+0.8))
-
-    _draw_block(ax2, step.kernel,
-                face_color=C_FILTER_FACE, edge_color=C_FILTER_EDGE)
-    _style_ax(ax2, f"Filter {k}×{k}×{C}",
-              xlim=(-0.5, k+0.5), ylim=(-0.5, k+0.5), zlim=(-0.2, C+0.8))
-
-    # Izlaz — active je trenutna ćelija koja se popunjava
-    out_active = np.zeros((out_size, out_size), dtype=bool)
-    out_active[step.out_row, step.out_col] = True
-
-    # Izlazna mapa: NaN za nepopunjene
-    out_display = step.output_map.astype(float).copy()
-    out_display[empty] = np.nan
-
-    _draw_block(ax3, out_display,
-                face_color=C_OUTPUT_FACE, edge_color=C_OUTPUT_EDGE,
-                active_mask=out_active, empty_mask=empty)
-    _style_ax(ax3, f"Izlaz {out_size}×{out_size}",
-              xlim=(-0.5, out_size+0.5), ylim=(-0.5, out_size+0.5),
-              zlim=(-0.2, 1.8))
-
-    # ── 2D panel ──────────────────────────────────────────────────────
-    # patch: isječak ulaza koji se trenutno množi s filterom
-    patch_2d = step.input_padded[
-        step.filter_row : step.filter_row + k,
-        step.filter_col : step.filter_col + k,
-        0              # kanal 0 za prikaz (višekanalni se sumiraju)
+def _add_legend(fig, is_pattern=False):
+    patches = [
+        mpatches.Patch(color=COLOR_INPUT[:3], label='Ulaz'),
+        mpatches.Patch(color=COLOR_ACTIVE[:3], label='Aktivan region'),
+        mpatches.Patch(color=COLOR_FILTER[:3], label='Filter'),
+        mpatches.Patch(color=COLOR_OUTPUT[:3], label='Izlaz')
     ]
-    kernel_2d = step.kernel[:, :, 0]
+    if is_pattern:
+        patches.append(mpatches.Patch(color=COLOR_POSITIVE[:3], label='Pozitivna Detekcija'))
+        patches.append(mpatches.Patch(color=COLOR_NEGATIVE[:3], label='Negativna Detekcija'))
 
-    # Produkti samo za kanal 0 (suma po svim kanalima je conv_sum)
-    products_2d = (patch_2d * kernel_2d).astype(int)
-
-    _draw_calc_panel(ax_calc,
-                     patch=patch_2d,
-                     kernel=kernel_2d,
-                     products=products_2d,
-                     conv_sum=step.output_value - step.bias,
-                     output_val=step.output_value,
-                     out_row=step.out_row,
-                     out_col=step.out_col,
-                     bias=step.bias)
-
-    # ── Naslov ────────────────────────────────────────────────────────
-    bias_str = f" + bias({step.bias})" if step.bias else ""
-    fig.suptitle(
-        f"Konvolucija  │  Korak {step.step_idx + 1}/{step.total_steps}"
-        f"  │  Σ(patch × filter){bias_str} = {step.output_value:.0f}"
-        f"  →  izlaz[{step.out_row},{step.out_col}]",
-        color=C_ACCENT, fontsize=10, fontweight='bold', y=0.985
-    )
-    return fig
+    legend = fig.legend(handles=patches, loc='lower center', ncol=len(patches), fontsize=10)
+    if legend:
+        frame = legend.get_frame()
+        frame.set_facecolor('#2c313c')
+        frame.set_edgecolor('#3e4451')
+        for text in legend.get_texts(): text.set_color("white")
 
 
-# ─── Pooling ─────────────────────────────────────────────────────────────────
-
-def render_pool_step(step, config, fig=None):
-    """
-    Crta jedan korak pooling-a.
-
-    step   — PoolStep dataclass
-    config — PoolConfig dataclass
-    """
-    if fig is None:
-        fig = plt.figure(figsize=(14, 7), facecolor=C_BG)
+# ------------------------------------------------------------------
+# POMOĆNA FUNKCIJA: RASPISUJE FORMULU HORIZONTALNO!
+# ------------------------------------------------------------------
+def _build_detailed_formula(region, filt, ch_sums, total_sum, bias, output_val):
+    if region.ndim == 2:
+        region = region[:, :, np.newaxis]
+        filt = filt[:, :, np.newaxis]
+    C = region.shape[2]
+    lines = []
+    for c in range(C):
+        r_flat = region[:, :, c].flatten()
+        f_flat = filt[:, :, c].flatten()
+        pairs = [f"{r_flat[i]:.0f}×{f_flat[i]:.0f}" for i in range(len(r_flat))]
+        ch_str = " + ".join(pairs)
+        prefix = f"K{c + 1}: [ " if C > 1 else "Σ = [ "
+        lines.append(f"{prefix}{ch_str} ] = {ch_sums[c]}")
+    summary = ""
+    if C > 1:
+        summary += f"Ukupna suma: {' + '.join(str(x) for x in ch_sums)} = {total_sum}    |    "
+    if bias != 0:
+        summary += f"IZLAZ: {total_sum} + bias({bias}) = {output_val}"
     else:
-        fig.clear()
-        fig.patch.set_facecolor(C_BG)
+        summary += f"IZLAZ: {output_val}"
+    lines.append(summary)
+    return "\n".join(lines)
 
-    gs = GridSpec(2, 3, figure=fig,
-                  height_ratios=[3, 2],
-                  hspace=0.35, wspace=0.15,
-                  left=0.02, right=0.98,
-                  top=0.93, bottom=0.04)
 
-    ax1 = fig.add_subplot(gs[0, 0], projection='3d')
-    ax2 = fig.add_subplot(gs[0, 1], projection='3d')
-    ax3 = fig.add_subplot(gs[0, 2], projection='3d')
-    ax_calc = fig.add_subplot(gs[1, :])
+# ==================================================================
+# 1. KONVOLUCIJA
+# ==================================================================
+def render_convolution(fig: Figure, engine, step: dict) -> None:
+    fig.clear()
+    axes = [fig.add_subplot(131, projection='3d'), fig.add_subplot(132, projection='3d'),
+            fig.add_subplot(133, projection='3d')]
+    padded, filt, out = engine.padded_input, engine.filter_weights, engine.output_map
+    rows_p, cols_p, C = padded.shape
+    F = engine.filter_size
+    mask = np.zeros((rows_p, cols_p), dtype=bool)
+    mask[step["in_row"]: step["in_row"] + F, step["in_col"]: step["in_col"] + F] = True
+    _draw_block(axes[0], padded, origin=(0, 0, 0), highlight_mask=mask, values_mask=mask, channel_gap=1.5)
+    axes[0].set_title(f"ULAZNA MAPA {'(Padded)' if engine.padding else ''}", fontsize=11, fontweight='bold', pad=10,
+                      color='white')
+    _draw_block(axes[1], filt, origin=(0, 0, 0), face_color=COLOR_FILTER, value_fmt="{:.0f}", channel_gap=1.5)
+    axes[1].set_title("FILTER", fontsize=11, fontweight='bold', pad=10, color='white')
+    formula = _build_detailed_formula(step["region"], filt, step['ch_sums'], step['conv_sum'], engine.bias,
+                                      step['output_val'])
+    f_size = 16 if F <= 3 else 12
+    fig.text(0.5, 0.98, formula, ha='center', va='top', color='white', fontsize=f_size, fontweight='bold',
+             bbox=FORMULA_BBOX)
+    _draw_block(axes[2], out, origin=(0, 0, 0), face_color=COLOR_OUTPUT, value_fmt="{:.0f}", channel_gap=1.5)
+    axes[2].set_title(f"IZLAZNA MAPA\nNova vrednost: {step['output_val']}", fontsize=11, fontweight='bold', pad=10,
+                      color='white')
+    y_extent = C * 1.0 + (C - 1) * 1.5
+    max_ext = max(rows_p, cols_p, F, engine.output_size, y_extent)
+    for ax in axes:
+        _set_ax_limits(ax, max_ext)
+        ax.view_init(elev=20, azim=-55)
+    _add_legend(fig)
+    fig.tight_layout(rect=[0, 0.05, 1, 0.78])
 
-    H = config.input_size
-    k = config.kernel_size
-    out_size = config.output_size()
 
-    # Active mask na ulazu
-    active = np.zeros((H, H), dtype=bool)
-    for dr in range(k):
-        for dc in range(k):
-            active[step.filter_row + dr, step.filter_col + dc] = True
+# ==================================================================
+# 2. POOLING
+# ==================================================================
+# ==================================================================
+# 2. POOLING - ISPRAVLJENO ZA MULTI-CHANNEL
+# ==================================================================
+def render_pooling(fig: Figure, engine, step: dict) -> None:
+    fig.clear()
+    has_weights = engine.pool_type == "weighted"
+    # Ako ima težina (Weighted Avg), trebaju nam 3 subplota, inače 2
+    axes = [fig.add_subplot(131 if has_weights else 121, projection='3d'),
+            fig.add_subplot(132 if has_weights else 122, projection='3d')]
+    if has_weights: axes.append(fig.add_subplot(133, projection='3d'))
 
-    # Empty mask na izlazu
-    empty = np.ones((out_size, out_size), dtype=bool)
-    for idx in range(step.step_idx + 1):
-        ri, ci = divmod(idx, out_size)
-        if ri < out_size:
-            empty[ri, ci] = False
+    inp, H, F = engine.input_map, engine.input_size, engine.filter_size
+    C = engine.channels  # Uzimamo broj kanala
 
-    # ── 3D blokovi ────────────────────────────────────────────────────
-    _draw_block(ax1, step.input_map,
-                face_color=C_INPUT_FACE, edge_color=C_INPUT_EDGE,
-                active_mask=active)
-    _style_ax(ax1, f"Ulaz {H}×{H}",
-              xlim=(-0.5, H+0.5), ylim=(-0.5, H+0.5), zlim=(-0.2, 1.8))
+    # Highlight maska za aktivni region
+    mask = np.zeros((H, H), dtype=bool)
+    mask[step["in_row"]: step["in_row"] + F, step["in_col"]: step["in_col"] + F] = True
 
-    # Srednji subplot: težine (weighted) ili prozor (ostali)
-    if step.pool_type.value == "Weighted Avg":
-        w_disp = step.weights if step.weights.ndim == 3 \
-                 else step.weights[:, :, np.newaxis]
-        _draw_block(ax2, w_disp, face_color="#2a1a3a", edge_color="#AA00FF")
-        _style_ax(ax2, f"Težine {k}×{k}",
-                  xlim=(-0.5, k+0.5), ylim=(-0.5, k+0.5), zlim=(-0.2, 1.8))
+    # 1. Ulaz (Crtamo sve kanale sa razmakom 1.5)
+    _draw_block(axes[0], inp, origin=(0, 0, 0), highlight_mask=mask, values_mask=mask, channel_gap=1.5)
+    axes[0].set_title(f"ULAZ\n{engine.pool_type.upper()} pooling", fontsize=11, fontweight='bold', pad=10,
+                      color='white')
+
+    # --- FORMULA ZA POOLING (Fokus na Kanal 1) ---
+    vals = step["regions"][0].flatten()
+    result = step["output_vals"][0]
+
+    if engine.pool_type == "max":
+        formula = f"K1: MAX( {', '.join(map(str, vals.astype(int)))} ) = {result:.1f}"
+    elif engine.pool_type == "avg":
+        formula = f"K1: AVG( {', '.join(map(str, vals.astype(int)))} ) = {result:.2f}"
+    elif engine.pool_type == "l2":
+        formula = f"K1: L2 NORM( {', '.join(map(str, vals.astype(int)))} ) = {result:.2f}"
     else:
-        _draw_block(ax2, step.patch,
-                    face_color=C_FILTER_FACE, edge_color=C_FILTER_EDGE)
-        _style_ax(ax2, f"Prozor {k}×{k}  [{step.pool_type.value}]",
-                  xlim=(-0.5, k+0.5), ylim=(-0.5, k+0.5), zlim=(-0.2, 1.8))
+        # Prikaz postupka za weighted average
+        r_flat = step["regions"][0].flatten()
+        w_flat = engine.weights.flatten()
+        pairs = [f"{r_flat[i]:.0f}×{w_flat[i]:.0f}" for i in range(len(r_flat))]
+        formula = f"K1 W_AVG: [ {' + '.join(pairs)} ] / Suma_težina({np.sum(engine.weights)}) = {result:.2f}"
 
-    # Izlaz
-    out_active = np.zeros((out_size, out_size), dtype=bool)
-    out_active[step.out_row, step.out_col] = True
+    if C > 1:
+        formula += f"\n(Isto se primenjuje na ostalih {C - 1} kanala)"
 
-    out_display = step.output_map.astype(float).copy()
-    out_display[empty] = np.nan
+    fig.text(0.5, 0.98, formula, ha='center', va='top', color='white', fontsize=16, fontweight='bold',
+             bbox=FORMULA_BBOX)
 
-    _draw_block(ax3, out_display,
-                face_color=C_OUTPUT_FACE, edge_color=C_OUTPUT_EDGE,
-                active_mask=out_active, empty_mask=empty)
-    _style_ax(ax3, f"Izlaz {out_size}×{out_size}",
-              xlim=(-0.5, out_size+0.5), ylim=(-0.5, out_size+0.5),
-              zlim=(-0.2, 1.8))
+    ax_idx = 1
+    # 2. Težine (samo ako je Weighted Avg)
+    if has_weights:
+        _draw_block(axes[1], engine.weights, origin=(0, 0, 0), face_color=COLOR_FILTER, value_fmt="{:.0f}")
+        axes[1].set_title("TEŽINE", fontsize=11, fontweight='bold', pad=10, color='white')
+        ax_idx = 2
 
-    # ── 2D panel ──────────────────────────────────────────────────────
-    patch_2d  = step.patch[:, :, 0] if step.patch.ndim == 3 else step.patch
-    pt        = step.pool_type.value.lower().replace(" ", "_")
-    pool_key  = ("max" if "max" in pt
-                 else "avg" if "avg" in pt and "weight" not in pt
-                 else "l2" if "l2" in pt
-                 else "weighted")
+    # 3. IZLAZ - PROMENA: Sada šaljemo CELU mapu (engine.output_map) umesto samo engine.output_map[:, :, 0]
+    out_map = engine.output_map
+    _draw_block(axes[ax_idx], out_map, origin=(0, 0, 0), face_color=COLOR_OUTPUT, value_fmt="{:.1f}", channel_gap=1.5)
+    axes[ax_idx].set_title(f"IZLAZ\nNova vrednost (K1): {result:.1f}", fontsize=11, fontweight='bold', pad=10,
+                           color='white')
 
-    weights_2d = None
-    if pool_key == "weighted":
-        weights_2d = step.weights if step.weights.ndim == 2 \
-                     else step.weights[:, :, 0]
+    # Postavljanje granica osa (uzimajući u obzir razmak kanala)
+    y_extent = C * 1.0 + (C - 1) * 1.5
+    max_ext = max(H, F, engine.output_size, y_extent)
 
-    _draw_calc_panel(ax_calc,
-                     patch=patch_2d,
-                     kernel=None,
-                     products=None,
-                     conv_sum=step.output_value,
-                     output_val=step.output_value,
-                     out_row=step.out_row,
-                     out_col=step.out_col,
-                     pool_type=pool_key,
-                     weights=weights_2d)
+    for ax in axes:
+        _set_ax_limits(ax, max_ext)
+        ax.view_init(elev=20, azim=-55)
 
-    fig.suptitle(
-        f"{step.pool_type.value}  │  Korak {step.step_idx + 1}/{step.total_steps}"
-        f"  │  {step.formula_str}",
-        color=C_ACCENT, fontsize=10, fontweight='bold', y=0.985
-    )
-    return fig
+    _add_legend(fig)
+    fig.tight_layout(rect=[0, 0.05, 1, 0.78])
 
 
-# ─── Pattern detekcija ───────────────────────────────────────────────────────
+# ==================================================================
+# 3. PATTERN
+# ==================================================================
+def render_pattern(fig: Figure, engine, step: dict, filter_idx: int) -> None:
+    fig.clear()
+    axes = [fig.add_subplot(131, projection='3d'), fig.add_subplot(132, projection='3d'),
+            fig.add_subplot(133, projection='3d')]
+    inp, F = engine.input_map, engine.FILTER_SIZE
+    r0, c0 = step["filter_row"], step["filter_col"]
 
-def render_pattern_step(step, fig=None):
-    """
-    Crta korak detekcije obrazaca.
+    # --- 1. BOJE ZA ULAZNU MAPU ---
+    active_color = COLOR_ACTIVE
+    if step["match_type"] == "positive":
+        active_color = COLOR_POSITIVE
+    elif step["match_type"] == "negative":
+        active_color = COLOR_NEGATIVE
 
-    Layout:
-      [3D ulaz 12×12] [3D filter] [3D izlaz 10×10] [2D heatmap izlaza]
-      [            2D panel za računanje                               ]
-    """
-    if fig is None:
-        fig = plt.figure(figsize=(16, 7), facecolor=C_BG)
-    else:
-        fig.clear()
-        fig.patch.set_facecolor(C_BG)
+    color_matrix_in = np.empty((engine.MAP_SIZE, engine.MAP_SIZE, 4))
+    color_matrix_in[:] = COLOR_INPUT
+    for sr in engine.special_regions:
+        if sr["filter_idx"] == filter_idx:
+            sr_r, sr_c = sr["row"], sr["col"]
+            # Diskretna pozadina šablona na ulazu
+            color_matrix_in[sr_r:sr_r + F, sr_c:sr_c + F] = (0, 0.5, 0, 0.25) if sr["type"] == "positive" else (
+            0.5, 0, 0, 0.25)
 
-    gs = GridSpec(2, 4, figure=fig,
-                  height_ratios=[3, 2],
-                  hspace=0.35, wspace=0.2,
-                  left=0.02, right=0.98,
-                  top=0.93, bottom=0.04)
+    color_matrix_in[r0:r0 + F, c0:c0 + F] = active_color
+    _draw_block(axes[0], inp, origin=(0, 0, 0), color_matrix=color_matrix_in,
+                show_values=True, value_fmt="{:.0f}", font_size=8)
+    axes[0].set_title(f"ULAZNA MAPA 12×12\nFilter {filter_idx + 1}", fontsize=11, fontweight='bold', pad=10,
+                      color='white')
 
-    ax_inp  = fig.add_subplot(gs[0, 0], projection='3d')
-    ax_flt  = fig.add_subplot(gs[0, 1], projection='3d')
-    ax_out  = fig.add_subplot(gs[0, 2], projection='3d')
-    ax_heat = fig.add_subplot(gs[0, 3])
-    ax_calc = fig.add_subplot(gs[1, :])
+    # --- 2. FILTER ---
+    _draw_block(axes[1], engine.filters[filter_idx], origin=(0, 0, 0), face_color=COLOR_FILTER, font_size=13)
+    axes[1].set_title(f"FILTER {filter_idx + 1}", fontsize=11, fontweight='bold', pad=10, color='white')
 
-    fi = step.filter_idx
-    k  = 3
-    out_size = 10
+    # --- 3. FORMULA ---
+    formula = _build_detailed_formula(step["region"], engine.filters[filter_idx], [step['output_value']],
+                                      step['output_value'], 0, step['output_value'])
+    label = " ← DETEKTOVAN OBRAZAC!" if step["match_type"] == "positive" else (
+        " ← NEGATIVAN OBRAZAC!" if step["match_type"] == "negative" else "")
+    if label: formula += f"\n{label}"
 
-    # Match mask za ulaz — sve pozitivne i negativne pozicije
-    from core.pattern import POSITIVE_POSITIONS, NEGATIVE_POSITIONS
-    match_mask = {}
-    for ffi in range(3):
-        pr, pc = POSITIVE_POSITIONS[ffi]
-        nr, nc = NEGATIVE_POSITIONS[ffi]
-        match_mask[(pr, pc)] = 'positive'
-        match_mask[(nr, nc)] = 'negative'
+    text_color = "white"
+    if step["match_type"] == "positive":
+        text_color = "#98c379"
+    elif step["match_type"] == "negative":
+        text_color = "#e06c75"
+    fig.text(0.5, 0.98, formula, ha='center', va='top', color=text_color, fontsize=16, fontweight='bold',
+             bbox=FORMULA_BBOX)
 
-    # Active mask — trenutni region
-    active_inp = np.zeros((12, 12), dtype=bool)
-    for dr in range(k):
-        for dc in range(k):
-            active_inp[step.filter_row + dr, step.filter_col + dc] = True
+    # --- 4. IZLAZNA MAPA SA TRAJNIM BOJAMA ---
+    out_map = engine.output_maps[filter_idx]
+    out_rows, out_cols = out_map.shape
 
-    # ── 3D ulaz ───────────────────────────────────────────────────────
-    _draw_block(ax_inp, step.input_map,
-                face_color=C_INPUT_FACE, edge_color=C_INPUT_EDGE,
-                active_mask=active_inp, match_mask=match_mask)
-    _style_ax(ax_inp, "Ulaz 12×12",
-              xlim=(-0.5, 12.5), ylim=(-0.5, 12.5), zlim=(-0.2, 1.8),
-              elev=28, azim=-48)
+    # Kreiramo matricu boja za izlaz (podrazumevano ljubičasta)
+    color_matrix_out = np.empty((out_rows, out_cols, 4))
+    color_matrix_out[:] = COLOR_OUTPUT
 
-    # ── 3D filter ─────────────────────────────────────────────────────
-    filter_edge_colors = [C_FILTER_EDGE, "#FF9800", "#E040FB"]
-    _draw_block(ax_flt, step.kernel,
-                face_color=C_FILTER_FACE,
-                edge_color=filter_edge_colors[fi])
-    _style_ax(ax_flt, f"Filter {fi+1} (3×3)",
-              xlim=(-0.5, k+0.5), ylim=(-0.5, k+0.5), zlim=(-0.2, 1.8))
+    # Prolazimo kroz sve specijalne regione (detekcije)
+    for sr in engine.special_regions:
+        if sr["filter_idx"] == filter_idx:
+            # U detekciji šablona, pošto je korak 1, pozicija šablona u ulazu (r,c)
+            # je ista kao pozicija rezultata u izlazu (r,c)
+            r, c = sr["row"], sr["col"]
 
-    # ── 3D izlaz ──────────────────────────────────────────────────────
-    empty_out = np.ones((out_size, out_size), dtype=bool)
-    for idx in range(step.step_idx + 1):
-        ri, ci = divmod(idx, out_size)
-        if ri < out_size:
-            empty_out[ri, ci] = False
+            # Ako je ta kockica već izračunata (nije NaN), bojimo je trajno
+            if not np.isnan(out_map[r, c]):
+                color_matrix_out[r, c] = COLOR_POSITIVE if sr["type"] == "positive" else COLOR_NEGATIVE
 
-    out_active = np.zeros((out_size, out_size), dtype=bool)
-    out_active[step.out_row, step.out_col] = True
+    # Isticanje TRENUTNE kockice (da blinka dok se računa)
+    mask = np.zeros(out_map.shape, dtype=bool)
+    mask[step["out_row"], step["out_col"]] = True
+    # Trenutna kockica je uvek intenzivna boja detekcije ili podrazumevana aktivna
+    current_out_color = active_color
 
-    out_display = step.all_output_maps[fi].copy()
-    out_display[empty_out] = np.nan
+    _draw_block(axes[2], out_map, origin=(0, 0, 0), color_matrix=color_matrix_out,
+                highlight_mask=mask, highlight_color=current_out_color,
+                value_fmt="{:.0f}", font_size=13)
+    axes[2].set_title(f"IZLAZ FILTERA {filter_idx + 1}", fontsize=11, fontweight='bold', pad=10, color='white')
 
-    match_out = {}
-    if step.match_type == 'positive':
-        match_out[(step.out_row, step.out_col)] = 'positive'
-    elif step.match_type == 'negative':
-        match_out[(step.out_row, step.out_col)] = 'negative'
+    # Podešavanja osa
+    for ax, max_d in zip(axes, [engine.MAP_SIZE, F, engine.output_size]):
+        _set_ax_limits(ax, max_ext=max_d)
+        ax.view_init(elev=20, azim=-55)
 
-    _draw_block(ax_out, out_display,
-                face_color=C_OUTPUT_FACE,
-                edge_color=filter_edge_colors[fi],
-                active_mask=out_active,
-                empty_mask=empty_out,
-                match_mask=match_out)
-    _style_ax(ax_out, f"Izlaz filtera {fi+1} (10×10)",
-              xlim=(-0.5, out_size+0.5), ylim=(-0.5, out_size+0.5),
-              zlim=(-0.2, 1.8))
-
-    # ── Heatmap ───────────────────────────────────────────────────────
-    ax_heat.set_facecolor(C_BG)
-    valid_out = step.all_output_maps[fi].copy()
-    valid_out[np.isnan(valid_out)] = 0
-    im = ax_heat.imshow(valid_out, cmap='RdYlGn',
-                        aspect='auto', vmin=-30, vmax=30)
-    ax_heat.set_title(f"Heatmap izlaza {fi+1}\nmax={np.nanmax(step.all_output_maps[fi]):.0f}",
-                      color=C_TEXT_PRIMARY, fontsize=8)
-    ax_heat.tick_params(colors=C_TEXT_DIM, labelsize=6)
-    for spine in ax_heat.spines.values():
-        spine.set_edgecolor(C_GRID_LINE)
-
-    # Označi pozitivnu i negativnu poziciju na heatmapu
-    pr, pc = POSITIVE_POSITIONS[fi]
-    nr, nc = NEGATIVE_POSITIONS[fi]
-    for (mr, mc), ec in [(pr, pc, C_POSITIVE_EDGE), (nr, nc, C_NEGATIVE_EDGE)]:
-        ax_heat.add_patch(plt.Rectangle(
-            (mc - 0.5, mr - 0.5), 1, 1,
-            linewidth=1.5, edgecolor=ec, facecolor='none'
-        ))
-
-    # ── 2D panel ──────────────────────────────────────────────────────
-    patch_2d  = step.input_map[
-        step.filter_row : step.filter_row + k,
-        step.filter_col : step.filter_col + k
-    ]
-    kernel_2d = step.kernel[:, :, 0] if step.kernel.ndim == 3 else step.kernel
-    products  = (patch_2d * kernel_2d).astype(float)
-
-    _draw_calc_panel(ax_calc,
-                     patch=patch_2d,
-                     kernel=kernel_2d,
-                     products=products,
-                     conv_sum=step.output_value,
-                     output_val=step.output_value,
-                     out_row=step.out_row,
-                     out_col=step.out_col,
-                     bias=0)
-
-    # Naslov s informacijom o poklapanju
-    match_labels = {
-        'positive': f"  ✓  MAKSIMUM — savršeno poklapanje s filterom {fi+1}!",
-        'negative': f"  ✗  MINIMUM — negativno poklapanje s filterom {fi+1}!",
-        'neutral':  "",
-    }
-    match_colors = {
-        'positive': C_POSITIVE_EDGE,
-        'negative': C_NEGATIVE_EDGE,
-        'neutral':  C_ACCENT,
-    }
-    mtype = getattr(step, 'match_type', 'neutral') or 'neutral'
-
-    fig.suptitle(
-        f"Detekcija obrazaca  │  Filter {fi+1}/3"
-        f"  │  Korak {step.step_idx+1}/{step.total_steps}"
-        f"  │  Σ = {step.output_value:.0f}"
-        f"{match_labels.get(mtype, '')}",
-        color=match_colors.get(mtype, C_ACCENT),
-        fontsize=9.5, fontweight='bold', y=0.985
-    )
-    return fig
+    _add_legend(fig, is_pattern=True)
+    fig.tight_layout(rect=[0, 0.05, 1, 0.78])

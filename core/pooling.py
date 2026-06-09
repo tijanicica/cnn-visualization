@@ -62,9 +62,9 @@ class PoolingEngine:
 
         # Izlazna mapa: čuvamo float jer avg/l2/weighted daju decimale
         # Shape: (output_size, output_size, channels)
-        self.output_map = np.zeros(
+        self.output_map = np.full(
             (self.output_size, self.output_size, self.channels),
-            dtype=float
+            np.nan
         )
 
         # Isječak fiksnih težina za trenutnu veličinu filtera
@@ -73,6 +73,11 @@ class PoolingEngine:
 
         self.steps = self._compute_all_steps()
         self.current_step = 0
+
+        if self.steps:
+            step0 = self.steps[0]
+            for c, val in enumerate(step0["output_vals"]):
+                self.output_map[step0["out_row"], step0["out_col"], c] = val
 
     def _pool_region(self, region: np.ndarray) -> float:
         """
@@ -176,17 +181,18 @@ class PoolingEngine:
             step = self.steps[self.current_step]
             # Poništi
             for c in range(self.channels):
-                self.output_map[step["out_row"], step["out_col"], c] = 0.0
+                self.output_map[step["out_row"], step["out_col"], c] = np.nan
             self.current_step -= 1
             return True
         return False
 
     def reset(self):
-        self.output_map = np.zeros(
-            (self.output_size, self.output_size, self.channels),
-            dtype=float
-        )
+        self.output_map = np.full((self.output_size, self.output_size, self.channels), np.nan)
         self.current_step = 0
+        if self.steps:
+            step0 = self.steps[0]
+            for c, val in enumerate(step0["output_vals"]):
+                self.output_map[step0["out_row"], step0["out_col"], c] = val
 
     def is_finished(self) -> bool:
         return self.current_step == len(self.steps) - 1
